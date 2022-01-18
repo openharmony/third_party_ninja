@@ -1,0 +1,40 @@
+{
+    "name": "@ohos/ninja",
+    "version": "",
+    "description": "Third-party open-source software ninja | 三方开源软件ninja",
+    "homePage": "https://gitee.com/openharmony",
+    "license": "Apache V2",
+    "repository": "https://gitee.com/openharmony/third_party_ninja",
+    "domain": "os",
+    "language": "",
+    "publishAs": "code-segment",
+    "private": false,
+    "scripts": {},
+    "tags": [
+        "third_party"
+    ],
+    "keywords": [
+        "third-party",
+        "ninja"
+    ],
+    "envs": {},
+    "dirs": {},
+    "licensePath": "COPYING",
+    "segment": {
+        "destPath": "third_party/ninja"
+    },
+    "component": {
+        "name": "thirdparty_ninja",
+        "subsystem": "",
+        "syscap": [],
+        "features": [],
+        "adapted_system_type": [],
+        "rom": "",
+        "ram": "",
+        "build": {
+            "sub_component": [],
+            "inner_kits": [],
+            "test": []
+        }
+    }
+}

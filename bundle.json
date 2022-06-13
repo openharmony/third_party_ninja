@@ -11,8 +11,8 @@
     "scripts": {},
     "licensePath": "COPYING",
     "component": {
-        "name": "thirdparty_ninja",
-        "subsystem": "",
+        "name": "ninja",
+        "subsystem": "thirdparty",
         "syscap": [],
         "features": [],
         "adapted_system_type": [],

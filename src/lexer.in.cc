@@ -19,6 +19,8 @@
 #include "eval_env.h"
 #include "util.h"
 
+using namespace std;
+
 bool Lexer::Error(const string& message, string* err) {
   // Compute line/column.
   int line = 1;
@@ -82,6 +84,7 @@ const char* Lexer::TokenName(Token t) {
   case NEWLINE:  return "newline";
   case PIPE2:    return "'||'";
   case PIPE:     return "'|'";
+  case PIPEAT:   return "'|@'";
   case POOL:     return "'pool'";
   case RULE:     return "'rule'";
   case SUBNINJA: return "'subninja'";
@@ -140,6 +143,7 @@ Lexer::Token Lexer::ReadToken() {
     "default"  { token = DEFAULT;  break; }
     "="        { token = EQUALS;   break; }
     ":"        { token = COLON;    break; }
+    "|@"       { token = PIPEAT;   break; }
     "||"       { token = PIPE2;    break; }
     "|"        { token = PIPE;     break; }
     "include"  { token = INCLUDE;  break; }

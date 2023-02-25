@@ -30,6 +30,8 @@ typedef unsigned __int32 uint32_t;
 #include "state.h"
 #include "util.h"
 
+using namespace std;
+
 // The version is stored as 4 bytes after the signature and also serves as a
 // byte order mark. Signature and version combined are 16 bytes long.
 const char kFileSignature[] = "# ninjadeps\n";
@@ -293,6 +295,19 @@ DepsLog::Deps* DepsLog::GetDeps(Node* node) {
   return deps_[node->id()];
 }
 
+Node* DepsLog::GetFirstReverseDepsNode(Node* node) {
+  for (size_t id = 0; id < deps_.size(); ++id) {
+    Deps* deps = deps_[id];
+    if (!deps)
+      continue;
+    for (int i = 0; i < deps->node_count; ++i) {
+      if (deps->nodes[i] == node)
+        return nodes_[id];
+    }
+  }
+  return NULL;
+}
+
 bool DepsLog::Recompact(const string& path, string* err) {
   METRIC_RECORD(".ninja_deps recompact");
 
@@ -411,7 +426,9 @@ bool DepsLog::OpenForWriteIfNeeded() {
   }
   // Set the buffer size to this and flush the file buffer after every record
   // to make sure records aren't written partially.
-  setvbuf(file_, NULL, _IOFBF, kMaxRecordSize + 1);
+  if (setvbuf(file_, NULL, _IOFBF, kMaxRecordSize + 1) != 0) {
+    return false;
+  }
   SetCloseOnExec(fileno(file_));
 
   // Opening a file in append mode doesn't set the file pointer to the file's

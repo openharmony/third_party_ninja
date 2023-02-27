@@ -28,6 +28,8 @@
 #include "test.h"
 #include "line_printer.h"
 
+using namespace std;
+
 struct RegisteredTest {
   testing::Test* (*factory)();
   const char *name;
@@ -65,7 +67,7 @@ void Usage() {
 "usage: ninja_tests [options]\n"
 "\n"
 "options:\n"
-"  --gtest_filter=POSTIVE_PATTERN[-NEGATIVE_PATTERN]\n"
+"  --gtest_filter=POSITIVE_PATTERN[-NEGATIVE_PATTERN]\n"
 "      Run tests whose names match the positive but not the negative pattern.\n"
 "      '*' matches any substring. (gtest's ':', '?' are not implemented).\n");
 }

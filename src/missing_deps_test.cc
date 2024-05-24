@@ -33,7 +33,12 @@ struct MissingDependencyScannerTest : public testing::Test {
         scanner_(&delegate_, &deps_log_, &state_, &filesystem_) {
     std::string err;
     deps_log_.OpenForWrite(kTestDepsLogFilename, &err);
-    ASSERT_EQ("", err);
+    EXPECT_EQ("", err);
+  }
+
+  ~MissingDependencyScannerTest() {
+    // Remove test file.
+    deps_log_.Close();
   }
 
   MissingDependencyScanner& scanner() { return scanner_; }
@@ -79,6 +84,7 @@ struct MissingDependencyScannerTest : public testing::Test {
     ASSERT_EQ(1u, scanner().generator_rules_.count(rule));
   }
 
+  ScopedFilePath scoped_file_path_ = kTestDepsLogFilename;
   MissingDependencyTestDelegate delegate_;
   Rule generator_rule_;
   Rule compile_rule_;
@@ -159,4 +165,3 @@ TEST_F(MissingDependencyScannerTest, CycleInGraph) {
   std::vector<Node*> nodes = state_.RootNodes(&err);
   ASSERT_NE("", err);
 }
-

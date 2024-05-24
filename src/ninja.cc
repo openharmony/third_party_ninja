@@ -156,6 +156,10 @@ struct NinjaMain : public BuildLogUser {
   /// @return true if the manifest was rebuilt.
   bool RebuildManifest(const char* input_file, string* err, Status* status);
 
+  /// For each edge, lookup in build log how long it took last time,
+  /// and record that in the edge itself. It will be used for ETA predicton.
+  void ParsePreviousElapsedTimes();
+
   /// Build the targets listed on the command line.
   /// @return an exit code.
   int RunBuild(int argc, char** argv, Status* status);
@@ -287,6 +291,19 @@ bool NinjaMain::RebuildManifest(const char* input_file, string* err,
   }
 
   return true;
+}
+
+void NinjaMain::ParsePreviousElapsedTimes() {
+  for (Edge* edge : state_.edges_) {
+    for (Node* out : edge->outputs_) {
+      BuildLog::LogEntry* log_entry = build_log_.LookupByOutput(out->path());
+      if (!log_entry)
+        continue;  // Maybe we'll have log entry for next output of this edge?
+      edge->prev_elapsed_time_millis =
+          log_entry->end_time - log_entry->start_time;
+      break;  // Onto next edge.
+    }
+  }
 }
 
 Node* NinjaMain::CollectTarget(const char* cpath, string* err) {
@@ -532,7 +549,7 @@ int NinjaMain::ToolDeps(const Options* options, int argc, char** argv) {
   if (argc == 0) {
     for (vector<Node*>::const_iterator ni = deps_log_.nodes().begin();
          ni != deps_log_.nodes().end(); ++ni) {
-      if (deps_log_.IsDepsEntryLiveFor(*ni))
+      if (DepsLog::IsDepsEntryLiveFor(*ni))
         nodes.push_back(*ni);
     }
   } else {
@@ -672,6 +689,7 @@ int NinjaMain::ToolRules(const Options* options, int argc, char* argv[]) {
       }
     }
     printf("\n");
+    fflush(stdout);
   }
   return 0;
 }
@@ -881,7 +899,10 @@ std::string EvaluateCommandWithRspfile(const Edge* edge,
     return command;
 
   size_t index = command.find(rspfile);
-  if (index == 0 || index == string::npos || command[index - 1] != '@')
+  if (index == 0 || index == string::npos ||
+      (command[index - 1] != '@' &&
+       command.find("--option-file=") != index - 14 &&
+       command.find("-f ") != index - 3))
     return command;
 
   string rspfile_content = edge->GetBinding("rspfile_content");
@@ -891,7 +912,13 @@ std::string EvaluateCommandWithRspfile(const Edge* edge,
     rspfile_content.replace(newline_index, 1, 1, ' ');
     ++newline_index;
   }
-  command.replace(index - 1, rspfile.length() + 1, rspfile_content);
+  if (command[index - 1] == '@') {
+    command.replace(index - 1, rspfile.length() + 1, rspfile_content);
+  } else if (command.find("-f ") == index - 3) {
+    command.replace(index - 3, rspfile.length() + 3, rspfile_content);
+  } else {  // --option-file syntax
+    command.replace(index - 14, rspfile.length() + 14, rspfile_content);
+  }
   return command;
 }
 
@@ -1356,7 +1383,9 @@ int NinjaMain::RunBuild(int argc, char** argv, Status* status) {
   disk_interface_.AllowStatCache(false);
 
   if (builder.AlreadyUpToDate()) {
-    status->Info("no work to do.");
+    if (config_.verbosity != BuildConfig::NO_STATUS_UPDATE) {
+      status->Info("no work to do.");
+    }
     return 0;
   }
 
@@ -1400,7 +1429,7 @@ class DeferGuessParallelism {
   BuildConfig* config;
 
   DeferGuessParallelism(BuildConfig* config)
-      : config(config), needGuess(true) {}
+      : needGuess(true), config(config) {}
 
   void Refresh() {
     if (needGuess) {
@@ -1587,6 +1616,8 @@ NORETURN void real_main(int argc, char** argv) {
       status->Error("rebuilding '%s': %s", options.input_file, err.c_str());
       exit(1);
     }
+
+    ninja.ParsePreviousElapsedTimes();
 
     int result = ninja.RunBuild(argc, argv, status);
     if (g_metrics)

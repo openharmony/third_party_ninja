@@ -18,7 +18,6 @@
 # It expects the name of the variable as its first argument, and reads
 # stdin and writes stdout.
 
-set -e
 varname="$1"
 
 # 'od' and 'sed' may not be available on all platforms, and may not support the

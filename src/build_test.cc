@@ -15,6 +15,8 @@
 #include "build.h"
 
 #include <assert.h>
+#include <climits>
+#include <stdint.h>
 
 #include "build_log.h"
 #include "deps_log.h"
@@ -63,6 +65,7 @@ TEST_F(PlanTest, Basic) {
   EXPECT_TRUE(plan_.AddTarget(GetNode("out"), &err));
   ASSERT_EQ("", err);
   ASSERT_TRUE(plan_.more_to_do());
+  PrepareForTarget("out");
 
   Edge* edge = plan_.FindWork();
   ASSERT_TRUE(edge);
@@ -95,7 +98,6 @@ TEST_F(PlanTest, DoubleOutputDirect) {
   GetNode("mid1")->MarkDirty();
   GetNode("mid2")->MarkDirty();
   GetNode("out")->MarkDirty();
-
   string err;
   EXPECT_TRUE(plan_.AddTarget(GetNode("out"), &err));
   ASSERT_EQ("", err);
@@ -104,6 +106,7 @@ TEST_F(PlanTest, DoubleOutputDirect) {
   Edge* edge;
   edge = plan_.FindWork();
   ASSERT_TRUE(edge);  // cat in
+  string err;
   plan_.EdgeFinished(edge, Plan::kEdgeSucceeded, &err);
   ASSERT_EQ("", err);
 
@@ -169,7 +172,6 @@ TEST_F(PlanTest, DoubleDependent) {
   GetNode("a1")->MarkDirty();
   GetNode("a2")->MarkDirty();
   GetNode("out")->MarkDirty();
-
   string err;
   EXPECT_TRUE(plan_.AddTarget(GetNode("out"), &err));
   ASSERT_EQ("", err);
@@ -284,7 +286,6 @@ TEST_F(PlanTest, PoolsWithDepthTwo) {
     GetNode("outb" + string(1, '1' + static_cast<char>(i)))->MarkDirty();
   }
   GetNode("allTheThings")->MarkDirty();
-
   string err;
   EXPECT_TRUE(plan_.AddTarget(GetNode("allTheThings"), &err));
   ASSERT_EQ("", err);
@@ -473,7 +474,7 @@ struct FakeCommandRunner : public CommandRunner {
       max_active_edges_(1), fs_(fs) {}
 
   // CommandRunner impl
-  virtual bool CanRunMore() const;
+  virtual size_t CanRunMore() const;
   virtual bool StartCommand(Edge* edge);
   virtual bool WaitForCommand(Result* result);
   virtual vector<Edge*> GetActiveEdges();
@@ -574,8 +575,11 @@ void BuildTest::RebuildTarget(const string& target, const char* manifest,
   builder.command_runner_.release();
 }
 
-bool FakeCommandRunner::CanRunMore() const {
-  return active_edges_.size() < max_active_edges_;
+size_t FakeCommandRunner::CanRunMore() const {
+  if (active_edges_.size() < max_active_edges_)
+    return SIZE_MAX;
+
+  return 0;
 }
 
 bool FakeCommandRunner::StartCommand(Edge* edge) {
@@ -611,6 +615,7 @@ bool FakeCommandRunner::StartCommand(Edge* edge) {
       fs_->WriteFile(edge->outputs_[0]->path(), content);
   } else if (edge->rule().name() == "touch-implicit-dep-out") {
     string dep = edge->GetBinding("test_dependency");
+    fs_->Tick();
     fs_->Create(dep, "");
     fs_->Tick();
     for (vector<Node*>::iterator out = edge->outputs_.begin();
@@ -627,7 +632,12 @@ bool FakeCommandRunner::StartCommand(Edge* edge) {
     fs_->Create(dep, "");
   } else if (edge->rule().name() == "generate-depfile") {
     string dep = edge->GetBinding("test_dependency");
+    bool touch_dep = edge->GetBindingBool("touch_dependency");
     string depfile = edge->GetUnescapedDepfile();
+    if (touch_dep) {
+      fs_->Tick();
+      fs_->Create(dep, "");
+    }
     string contents;
     for (vector<Node*>::iterator out = edge->outputs_.begin();
          out != edge->outputs_.end(); ++out) {
@@ -635,6 +645,20 @@ bool FakeCommandRunner::StartCommand(Edge* edge) {
       fs_->Create((*out)->path(), "");
     }
     fs_->Create(depfile, contents);
+  } else if (edge->rule().name() == "long-cc") {
+    string dep = edge->GetBinding("test_dependency");
+    string depfile = edge->GetUnescapedDepfile();
+    string contents;
+    for (vector<Node*>::iterator out = edge->outputs_.begin();
+        out != edge->outputs_.end(); ++out) {
+      fs_->Tick();
+      fs_->Tick();
+      fs_->Tick();
+      fs_->Create((*out)->path(), "");
+      contents += (*out)->path() + ": " + dep + "\n";
+    }
+    if (!dep.empty() && !depfile.empty())
+      fs_->Create(depfile, contents);
   } else {
     printf("unknown command\n");
     return false;
@@ -689,6 +713,18 @@ bool FakeCommandRunner::WaitForCommand(Result* result) {
     result->status = ExitFailure;
   else
     result->status = ExitSuccess;
+
+  // This rule simulates an external process modifying files while the build command runs.
+  // See TestInputMtimeRaceCondition and TestInputMtimeRaceConditionWithDepFile.
+  // Note: only the first and third time the rule is run per test is the file modified, so
+  // the test can verify that subsequent runs without the race have no work to do.
+  if (edge->rule().name() == "long-cc") {
+    string dep = edge->GetBinding("test_dependency");
+    if (fs_->now_ == 4)
+      fs_->files_[dep].mtime = 3;
+    if (fs_->now_ == 10)
+      fs_->files_[dep].mtime = 9;
+  }
 
   // Provide a way for test cases to verify when an edge finishes that
   // some other edge is still active.  This is useful for test cases
@@ -954,9 +990,19 @@ TEST_F(BuildTest, DepFileOK) {
   ASSERT_EQ(1u, fs_.files_read_.size());
   EXPECT_EQ("foo.o.d", fs_.files_read_[0]);
 
-  // Expect three new edges: one generating foo.o, and two more from
-  // loading the depfile.
-  ASSERT_EQ(orig_edges + 3, (int)state_.edges_.size());
+  // Expect one new edge generating foo.o. Loading the depfile should have
+  // added nodes, but not phony edges to the graph.
+  ASSERT_EQ(orig_edges + 1, (int)state_.edges_.size());
+
+  // Verify that nodes for blah.h and bar.h were added and that they
+  // are marked as generated by a dep loader.
+  ASSERT_FALSE(state_.LookupNode("foo.o")->generated_by_dep_loader());
+  ASSERT_FALSE(state_.LookupNode("foo.c")->generated_by_dep_loader());
+  ASSERT_TRUE(state_.LookupNode("blah.h"));
+  ASSERT_TRUE(state_.LookupNode("blah.h")->generated_by_dep_loader());
+  ASSERT_TRUE(state_.LookupNode("bar.h"));
+  ASSERT_TRUE(state_.LookupNode("bar.h")->generated_by_dep_loader());
+
   // Expect our edge to now have three inputs: foo.c and two headers.
   ASSERT_EQ(3u, edge->inputs_.size());
 
@@ -1122,7 +1168,6 @@ TEST_F(BuildTest, DepFileCanonicalize) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule cc\n  command = cc $in\n  depfile = $out.d\n"
 "build gen/stuff\\things/foo.o: cc x\\y/z\\foo.c\n"));
-  Edge* edge = state_.edges_.back();
 
   fs_.Create("x/y/z/foo.c", "");
   GetNode("bar.h")->MarkDirty();  // Mark bar.h as missing.
@@ -1135,10 +1180,10 @@ TEST_F(BuildTest, DepFileCanonicalize) {
   // The depfile path does not get Canonicalize as it seems unnecessary.
   EXPECT_EQ("gen/stuff\\things/foo.o.d", fs_.files_read_[0]);
 
-  // Expect three new edges: one generating foo.o, and two more from
-  // loading the depfile.
-  ASSERT_EQ(orig_edges + 3, (int)state_.edges_.size());
+  // Expect one new edge enerating foo.o.
+  ASSERT_EQ(orig_edges + 1, (int)state_.edges_.size());
   // Expect our edge to now have three inputs: foo.c and two headers.
+  Edge* edge = state_.edges_.back();
   ASSERT_EQ(3u, edge->inputs_.size());
 
   // Expect the command line we generate to only use the original input, and
@@ -1471,7 +1516,7 @@ TEST_F(BuildWithLogTest, ImplicitGeneratedOutOfDate) {
 TEST_F(BuildWithLogTest, ImplicitGeneratedOutOfDate2) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule touch-implicit-dep-out\n"
-"  command = touch $test_dependency ; sleep 1 ; touch $out\n"
+"  command = sleep 1 ; touch $test_dependency ; sleep 1 ; touch $out\n"
 "  generator = 1\n"
 "build out.imp: touch-implicit-dep-out | inimp inimp2\n"
 "  test_dependency = inimp\n"));
@@ -1482,6 +1527,29 @@ TEST_F(BuildWithLogTest, ImplicitGeneratedOutOfDate2) {
   fs_.Tick();
 
   string err;
+
+  EXPECT_TRUE(builder_.AddTarget("out.imp", &err));
+  EXPECT_FALSE(builder_.AlreadyUpToDate());
+
+  EXPECT_TRUE(builder_.Build(&err));
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.Cleanup();
+  builder_.plan_.Reset();
+
+  EXPECT_TRUE(builder_.AddTarget("out.imp", &err));
+  EXPECT_TRUE(builder_.AlreadyUpToDate());
+  EXPECT_FALSE(GetNode("out.imp")->dirty());
+
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.Cleanup();
+  builder_.plan_.Reset();
+
+  fs_.Tick();
+  fs_.Create("inimp", "");
 
   EXPECT_TRUE(builder_.AddTarget("out.imp", &err));
   EXPECT_FALSE(builder_.AlreadyUpToDate());
@@ -1800,6 +1868,52 @@ TEST_F(BuildWithLogTest, RestatMissingInput) {
   ASSERT_EQ(restat_mtime, log_entry->mtime);
 }
 
+TEST_F(BuildWithLogTest, RestatInputChangesDueToRule) {
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
+"rule generate-depfile\n"
+"  command = sleep 1 ; touch $touch_dependency; touch $out ; echo \"$out: $test_dependency\" > $depfile\n"
+"build out1: generate-depfile || cat1\n"
+"  test_dependency = in2\n"
+"  touch_dependency = 1\n"
+"  restat = 1\n"
+"  depfile = out.d\n"));
+
+  // Perform the first build. out1 is a restat rule, so its recorded mtime in the build
+  // log should be the time the command completes, not the time the command started. One
+  // of out1's discovered dependencies will have a newer mtime than when out1 started
+  // running, due to its command touching the dependency itself.
+  string err;
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ("", err);
+  EXPECT_EQ(2u, command_runner_.commands_ran_.size());
+  EXPECT_EQ(2u, builder_.plan_.command_edge_count());
+  BuildLog::LogEntry* log_entry = build_log_.LookupByOutput("out1");
+  ASSERT_TRUE(NULL != log_entry);
+  ASSERT_EQ(2u, log_entry->mtime);
+
+  command_runner_.commands_ran_.clear();
+  state_.Reset();
+  builder_.Cleanup();
+  builder_.plan_.Reset();
+
+  fs_.Tick();
+  fs_.Create("in1", "");
+
+  // Touching a dependency of an order-only dependency of out1 should not cause out1 to
+  // rebuild. If out1 were not a restat rule, then it would rebuild here because its
+  // recorded mtime would have been an earlier mtime than its most recent input's (in2)
+  // mtime
+  EXPECT_TRUE(builder_.AddTarget("out1", &err));
+  ASSERT_EQ("", err);
+  EXPECT_TRUE(!state_.GetNode("out1", 0)->dirty());
+  EXPECT_TRUE(builder_.Build(&err));
+  ASSERT_EQ("", err);
+  EXPECT_EQ(1u, command_runner_.commands_ran_.size());
+  EXPECT_EQ(1u, builder_.plan_.command_edge_count());
+}
+
 TEST_F(BuildWithLogTest, GeneratedPlainDepfileMtime) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
 "rule generate-depfile\n"
@@ -1904,10 +2018,11 @@ TEST_F(BuildTest, RspFileSuccess)
   EXPECT_TRUE(builder_.Build(&err));
   ASSERT_EQ(3u, command_runner_.commands_ran_.size());
 
-  // The RSP files were created
-  ASSERT_EQ(files_created + 2, fs_.files_created_.size());
+  // The RSP files and temp file to acquire output mtimes were created
+  ASSERT_EQ(files_created + 3, fs_.files_created_.size());
   ASSERT_EQ(1u, fs_.files_created_.count("out 2.rsp"));
   ASSERT_EQ(1u, fs_.files_created_.count("out 3.rsp"));
+  ASSERT_EQ(1u, fs_.files_created_.count(".ninja_lock"));
 
   // The RSP files were removed
   ASSERT_EQ(files_removed + 2, fs_.files_removed_.size());
@@ -1941,9 +2056,10 @@ TEST_F(BuildTest, RspFileFailure) {
   ASSERT_EQ("subcommand failed", err);
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
 
-  // The RSP file was created
-  ASSERT_EQ(files_created + 1, fs_.files_created_.size());
+  // The RSP file and temp file to acquire output mtimes were created
+  ASSERT_EQ(files_created + 2, fs_.files_created_.size());
   ASSERT_EQ(1u, fs_.files_created_.count("out.rsp"));
+  ASSERT_EQ(1u, fs_.files_created_.count(".ninja_lock"));
 
   // The RSP file was NOT removed
   ASSERT_EQ(files_removed, fs_.files_removed_.size());
@@ -2094,11 +2210,28 @@ TEST_F(BuildTest, DepsGccWithEmptyDepfileErrorsOut) {
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
 }
 
-TEST_F(BuildTest, StatusFormatElapsed) {
+TEST_F(BuildTest, StatusFormatElapsed_e) {
   status_.BuildStarted();
   // Before any task is done, the elapsed time must be zero.
-  EXPECT_EQ("[%/e0.000]",
-            status_.FormatProgressStatus("[%%/e%e]", 0));
+  EXPECT_EQ("[%/e0.000]", status_.FormatProgressStatus("[%%/e%e]", 0));
+}
+
+TEST_F(BuildTest, StatusFormatElapsed_w) {
+  status_.BuildStarted();
+  // Before any task is done, the elapsed time must be zero.
+  EXPECT_EQ("[%/e00:00]", status_.FormatProgressStatus("[%%/e%w]", 0));
+}
+
+TEST_F(BuildTest, StatusFormatETA) {
+  status_.BuildStarted();
+  // Before any task is done, the ETA time must be unknown.
+  EXPECT_EQ("[%/E?]", status_.FormatProgressStatus("[%%/E%E]", 0));
+}
+
+TEST_F(BuildTest, StatusFormatTimeProgress) {
+  status_.BuildStarted();
+  // Before any task is done, the percentage of elapsed time must be zero.
+  EXPECT_EQ("[%/p  0%]", status_.FormatProgressStatus("[%%/p%p]", 0));
 }
 
 TEST_F(BuildTest, StatusFormatReplacePlaceholder) {
@@ -2125,8 +2258,8 @@ TEST_F(BuildTest, FailedDepsParse) {
 }
 
 struct BuildWithQueryDepsLogTest : public BuildTest {
-  BuildWithQueryDepsLogTest() : BuildTest(&log_) {
-  }
+  BuildWithQueryDepsLogTest()
+      : BuildTest(&log_), deps_log_file_("ninja_deps") {}
 
   ~BuildWithQueryDepsLogTest() {
     log_.Close();
@@ -2138,12 +2271,13 @@ struct BuildWithQueryDepsLogTest : public BuildTest {
     temp_dir_.CreateAndEnter("BuildWithQueryDepsLogTest");
 
     std::string err;
-    ASSERT_TRUE(log_.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(log_.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
   }
 
   ScopedTempDir temp_dir_;
 
+  ScopedFilePath deps_log_file_;
   DepsLog log_;
 };
 
@@ -2337,7 +2471,8 @@ TEST_F(BuildWithQueryDepsLogTest, TwoOutputsDepFileGCCOnlySecondaryOutput) {
 /// builder_ it sets up, because we want pristine objects for
 /// each build.
 struct BuildWithDepsLogTest : public BuildTest {
-  BuildWithDepsLogTest() {}
+  BuildWithDepsLogTest()
+      : build_log_file_("build_log"), deps_log_file_("ninja_deps") {}
 
   virtual void SetUp() {
     BuildTest::SetUp();
@@ -2350,6 +2485,8 @@ struct BuildWithDepsLogTest : public BuildTest {
   }
 
   ScopedTempDir temp_dir_;
+  ScopedFilePath build_log_file_;
+  ScopedFilePath deps_log_file_;
 
   /// Shadow parent class builder_ so we don't accidentally use it.
   void* builder_;
@@ -2363,6 +2500,7 @@ TEST_F(BuildWithDepsLogTest, Straightforward) {
       "build out: cat in1\n"
       "  deps = gcc\n"
       "  depfile = in1.d\n";
+
   {
     State state;
     ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
@@ -2370,7 +2508,7 @@ TEST_F(BuildWithDepsLogTest, Straightforward) {
 
     // Run the build once, everything should be ok.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -2400,8 +2538,8 @@ TEST_F(BuildWithDepsLogTest, Straightforward) {
 
     // Run the build again.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
     builder.command_runner_.reset(&command_runner_);
@@ -2441,7 +2579,7 @@ TEST_F(BuildWithDepsLogTest, ObsoleteDeps) {
 
     // Run the build once, everything should be ok.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -2470,8 +2608,8 @@ TEST_F(BuildWithDepsLogTest, ObsoleteDeps) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
     builder.command_runner_.reset(&command_runner_);
@@ -2522,6 +2660,210 @@ TEST_F(BuildWithDepsLogTest, DepsIgnoredInDryRun) {
   builder.command_runner_.release();
 }
 
+TEST_F(BuildWithDepsLogTest, TestInputMtimeRaceCondition) {
+  string err;
+  const char* manifest =
+      "rule long-cc\n"
+      "  command = long-cc\n"
+      "build out: long-cc in1\n"
+      "  test_dependency = in1\n";
+
+  State state;
+  ASSERT_NO_FATAL_FAILURE(AddCatRule(&state));
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
+
+  BuildLog build_log;
+  ASSERT_TRUE(build_log.Load(build_log_file_.path(), &err));
+  ASSERT_TRUE(build_log.OpenForWrite(build_log_file_.path(), *this, &err));
+
+  DepsLog deps_log;
+  ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+  ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
+
+  BuildLog::LogEntry* log_entry = NULL;
+  {
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    // Run the build, out gets built, dep file is created
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+    // See that an entry in the logfile is created. the input_mtime is 1 since that was
+    // the mtime of in1 when the command was started
+    log_entry = build_log.LookupByOutput("out");
+    ASSERT_TRUE(NULL != log_entry);
+    ASSERT_EQ(1u, log_entry->mtime);
+
+    builder.command_runner_.release();
+  }
+
+  {
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    // Trigger the build again - "out" should rebuild despite having a newer mtime than
+    // "in1", since "in1" was touched during the build of out (simulated by changing its
+    // mtime in the the test builder's WaitForCommand() which runs before FinishCommand()
+    command_runner_.commands_ran_.clear();
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+    // Check that the logfile entry is still correct
+    log_entry = build_log.LookupByOutput("out");
+    ASSERT_TRUE(NULL != log_entry);
+    ASSERT_TRUE(fs_.files_["in1"].mtime < log_entry->mtime);
+    builder.command_runner_.release();
+  }
+
+  {
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    // And a subsequent run should not have any work to do
+    command_runner_.commands_ran_.clear();
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.AlreadyUpToDate());
+
+    builder.command_runner_.release();
+  }
+}
+
+TEST_F(BuildWithDepsLogTest, TestInputMtimeRaceConditionWithDepFile) {
+  string err;
+  const char* manifest =
+      "rule long-cc\n"
+      "  command = long-cc\n"
+      "build out: long-cc\n"
+      "  deps = gcc\n"
+      "  depfile = out.d\n"
+      "  test_dependency = header.h\n";
+
+  fs_.Create("header.h", "");
+
+  State state;
+  ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
+
+  BuildLog build_log;
+  ASSERT_TRUE(build_log.Load(build_log_file_.path(), &err));
+  ASSERT_TRUE(build_log.OpenForWrite(build_log_file_.path(), *this, &err));
+
+  DepsLog deps_log;
+  ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+  ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
+
+  {
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+
+    // Run the build, out gets built, dep file is created
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+    // See that an entry in the logfile is created. the mtime is 1 due to the command
+    // starting when the file system's mtime was 1.
+    BuildLog::LogEntry* log_entry = build_log.LookupByOutput("out");
+    ASSERT_TRUE(NULL != log_entry);
+    ASSERT_EQ(1u, log_entry->mtime);
+
+    builder.command_runner_.release();
+  }
+
+  {
+    // Trigger the build again - "out" will rebuild since its newest input mtime (header.h)
+    // is newer than the recorded mtime of out in the build log
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+    builder.command_runner_.release();
+  }
+
+  {
+    // Trigger the build again - "out" won't rebuild since the file wasn't updated during
+    // the previous build
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    ASSERT_TRUE(builder.AlreadyUpToDate());
+
+    builder.command_runner_.release();
+  }
+
+  // touch the header to trigger a rebuild
+  fs_.Create("header.h", "");
+  ASSERT_EQ(fs_.now_, 7);
+
+  {
+    // Rebuild. This time, long-cc will cause header.h to be updated while the build is
+    // in progress
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+    builder.command_runner_.release();
+  }
+
+  {
+    // Rebuild. Because header.h is now in the deplog for out, it should be detectable as
+    // a change-while-in-progress and should cause a rebuild of out.
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.Build(&err));
+    ASSERT_EQ(1u, command_runner_.commands_ran_.size());
+
+    builder.command_runner_.release();
+  }
+
+  {
+    // This time, the header.h file was not updated during the build, so the target should
+    // not be considered dirty.
+    Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
+    builder.command_runner_.reset(&command_runner_);
+    command_runner_.commands_ran_.clear();
+
+    state.Reset();
+    EXPECT_TRUE(builder.AddTarget("out", &err));
+    ASSERT_EQ("", err);
+    EXPECT_TRUE(builder.AlreadyUpToDate());
+
+    builder.command_runner_.release();
+  }
+}
+
 /// Check that a restat rule generating a header cancels compilations correctly.
 TEST_F(BuildTest, RestatDepfileDependency) {
   ASSERT_NO_FATAL_FAILURE(AssertParse(&state_,
@@ -2564,7 +2906,7 @@ TEST_F(BuildWithDepsLogTest, RestatDepfileDependencyDepsLog) {
 
     // Run the build once, everything should be ok.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -2590,8 +2932,8 @@ TEST_F(BuildWithDepsLogTest, RestatDepfileDependencyDepsLog) {
 
     // Run the build again.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
     builder.command_runner_.reset(&command_runner_);
@@ -2623,7 +2965,7 @@ TEST_F(BuildWithDepsLogTest, DepFileOKDepsLog) {
 
     // Run the build once, everything should be ok.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -2643,8 +2985,8 @@ TEST_F(BuildWithDepsLogTest, DepFileOKDepsLog) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -2656,9 +2998,9 @@ TEST_F(BuildWithDepsLogTest, DepFileOKDepsLog) {
     EXPECT_TRUE(builder.AddTarget("fo o.o", &err));
     ASSERT_EQ("", err);
 
-    // Expect three new edges: one generating fo o.o, and two more from
-    // loading the depfile.
-    ASSERT_EQ(3u, state.edges_.size());
+    // Expect one new edge generating fo o.o, loading the depfile should
+    // not generate new edges.
+    ASSERT_EQ(1u, state.edges_.size());
     // Expect our edge to now have three inputs: foo.c and two headers.
     ASSERT_EQ(3u, edge->inputs_.size());
 
@@ -2694,7 +3036,7 @@ TEST_F(BuildWithDepsLogTest, DiscoveredDepDuringBuildChanged) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
@@ -2717,8 +3059,8 @@ TEST_F(BuildWithDepsLogTest, DiscoveredDepDuringBuildChanged) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
@@ -2740,8 +3082,8 @@ TEST_F(BuildWithDepsLogTest, DiscoveredDepDuringBuildChanged) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, &build_log, &deps_log, &fs_, &status_, 0);
@@ -2769,7 +3111,7 @@ TEST_F(BuildWithDepsLogTest, DepFileDepsLogCanonicalize) {
 
     // Run the build once, everything should be ok.
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -2791,23 +3133,21 @@ TEST_F(BuildWithDepsLogTest, DepFileDepsLogCanonicalize) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
     builder.command_runner_.reset(&command_runner_);
 
-    Edge* edge = state.edges_.back();
-
     state.GetNode("bar.h", 0)->MarkDirty();  // Mark bar.h as missing.
     EXPECT_TRUE(builder.AddTarget("a/b/c/d/e/fo o.o", &err));
     ASSERT_EQ("", err);
 
-    // Expect three new edges: one generating fo o.o, and two more from
-    // loading the depfile.
-    ASSERT_EQ(3u, state.edges_.size());
+    // Expect one new edge generating fo o.o.
+    ASSERT_EQ(1u, state.edges_.size());
     // Expect our edge to now have three inputs: foo.c and two headers.
+    Edge* edge = state.edges_.back();
     ASSERT_EQ(3u, edge->inputs_.size());
 
     // Expect the command line we generate to only use the original input.
@@ -2862,11 +3202,13 @@ TEST_F(BuildWithDepsLogTest, RestatMissingDepfileDepslog) {
   fs_.Create("out.d", "out: header.h");
   fs_.Create("header.h", "");
 
-  RebuildTarget("out", manifest, "build_log", "ninja_deps");
+  RebuildTarget("out", manifest, build_log_file_.c_str(),
+                deps_log_file_.c_str());
   ASSERT_EQ(2u, command_runner_.commands_ran_.size());
 
   // Sanity: this rebuild should be NOOP
-  RebuildTarget("out", manifest, "build_log", "ninja_deps");
+  RebuildTarget("out", manifest, build_log_file_.c_str(),
+                deps_log_file_.c_str());
   ASSERT_EQ(0u, command_runner_.commands_ran_.size());
 
   // Touch 'header.in', blank dependencies log (create a different one).
@@ -2875,12 +3217,14 @@ TEST_F(BuildWithDepsLogTest, RestatMissingDepfileDepslog) {
   fs_.Tick();
   fs_.Create("header.in", "");
 
+  ScopedFilePath deps2_file_("ninja_deps2");
+
   // (switch to a new blank deps_log "ninja_deps2")
-  RebuildTarget("out", manifest, "build_log", "ninja_deps2");
+  RebuildTarget("out", manifest, build_log_file_.c_str(), deps2_file_.c_str());
   ASSERT_EQ(2u, command_runner_.commands_ran_.size());
 
   // Sanity: this build should be NOOP
-  RebuildTarget("out", manifest, "build_log", "ninja_deps2");
+  RebuildTarget("out", manifest, build_log_file_.c_str(), deps2_file_.c_str());
   ASSERT_EQ(0u, command_runner_.commands_ran_.size());
 
   // Check that invalidating deps by target timestamp also works here
@@ -2888,11 +3232,11 @@ TEST_F(BuildWithDepsLogTest, RestatMissingDepfileDepslog) {
   fs_.Tick();
   fs_.Create("header.in", "");
   fs_.Create("out", "");
-  RebuildTarget("out", manifest, "build_log", "ninja_deps2");
+  RebuildTarget("out", manifest, build_log_file_.c_str(), deps2_file_.c_str());
   ASSERT_EQ(2u, command_runner_.commands_ran_.size());
 
   // And this build should be NOOP again
-  RebuildTarget("out", manifest, "build_log", "ninja_deps2");
+  RebuildTarget("out", manifest, build_log_file_.c_str(), deps2_file_.c_str());
   ASSERT_EQ(0u, command_runner_.commands_ran_.size());
 }
 
@@ -2909,7 +3253,10 @@ TEST_F(BuildTest, WrongOutputInDepfileCausesRebuild) {
   fs_.Create("header.h", "");
   fs_.Create("foo.o.d", "bar.o.d: header.h\n");
 
-  RebuildTarget("foo.o", manifest, "build_log", "ninja_deps");
+  ScopedFilePath build_log("build_log");
+  ScopedFilePath deps_file("ninja_deps");
+
+  RebuildTarget("foo.o", manifest, build_log.c_str(), deps_file.c_str());
   ASSERT_EQ(1u, command_runner_.commands_ran_.size());
 }
 
@@ -3042,9 +3389,10 @@ TEST_F(BuildTest, DyndepBuild) {
   ASSERT_EQ(2u, fs_.files_read_.size());
   EXPECT_EQ("dd-in", fs_.files_read_[0]);
   EXPECT_EQ("dd", fs_.files_read_[1]);
-  ASSERT_EQ(2u + files_created, fs_.files_created_.size());
+  ASSERT_EQ(3u + files_created, fs_.files_created_.size());
   EXPECT_EQ(1u, fs_.files_created_.count("dd"));
   EXPECT_EQ(1u, fs_.files_created_.count("out"));
+  EXPECT_EQ(1u, fs_.files_created_.count(".ninja_lock"));
 }
 
 TEST_F(BuildTest, DyndepBuildSyntaxError) {
@@ -3355,8 +3703,8 @@ TEST_F(BuildTest, DyndepBuildDiscoverOutputAndDepfileInput) {
   EXPECT_TRUE(builder_.AddTarget("out", &err));
   ASSERT_EQ("", err);
 
-  // Loading the depfile gave tmp.imp a phony input edge.
-  ASSERT_TRUE(GetNode("tmp.imp")->in_edge()->is_phony());
+  // Loading the depfile did not give tmp.imp a phony input edge.
+  ASSERT_FALSE(GetNode("tmp.imp")->in_edge());
 
   EXPECT_TRUE(builder_.Build(&err));
   EXPECT_EQ("", err);
@@ -3865,7 +4213,7 @@ TEST_F(BuildWithDepsLogTest, ValidationThroughDepfile) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);
@@ -3900,8 +4248,8 @@ TEST_F(BuildWithDepsLogTest, ValidationThroughDepfile) {
     ASSERT_NO_FATAL_FAILURE(AssertParse(&state, manifest));
 
     DepsLog deps_log;
-    ASSERT_TRUE(deps_log.Load("ninja_deps", &state, &err));
-    ASSERT_TRUE(deps_log.OpenForWrite("ninja_deps", &err));
+    ASSERT_TRUE(deps_log.Load(deps_log_file_.path(), &state, &err));
+    ASSERT_TRUE(deps_log.OpenForWrite(deps_log_file_.path(), &err));
     ASSERT_EQ("", err);
 
     Builder builder(&state, config_, NULL, &deps_log, &fs_, &status_, 0);

@@ -18,12 +18,13 @@
 #include <cstdio>
 #include <map>
 #include <memory>
-#include <queue>
 #include <string>
 #include <vector>
+#include <queue>
 
 #include "depfile_parser.h"
 #include "graph.h"  // XXX needed for DependencyScan; should rearrange.
+#include "graph.h"
 #include "exit_status.h"
 #include "util.h"  // int64_t
 
@@ -80,6 +81,7 @@ struct Plan {
   /// by information loaded from a dyndep file.
   bool DyndepsLoaded(DependencyScan* scan, const Node* node,
                      const DyndepFile& ddf, std::string* err);
+
 private:
   bool RefreshDyndepDependents(DependencyScan* scan, const Node* node, std::string* err);
   void UnmarkDependents(const Node* node, std::set<Node*>* dependents);
@@ -91,7 +93,7 @@ private:
   /// loads dynamic dependencies from the node's path.
   /// Returns 'false' if loading dyndep info fails and 'true' otherwise.
   bool NodeFinished(Node* node, std::string* err);
-
+  
   /// Enumerate possible steps we want for an edge.
   enum Want
   {
@@ -135,7 +137,7 @@ private:
 /// RealCommandRunner is an implementation that actually runs commands.
 struct CommandRunner {
   virtual ~CommandRunner() {}
-  virtual bool CanRunMore() const = 0;
+  virtual size_t CanRunMore() const = 0;
   virtual bool StartCommand(Edge* edge) = 0;
 
   /// The result of waiting for a command.
@@ -197,7 +199,7 @@ struct Builder {
   /// Run the build.  Returns false on error.
   /// It is an error to call this function when AlreadyUpToDate() is true.
   bool Build(std::string* err);
-
+  
   bool StartEdge(Edge* edge, std::string* err);
 
   std::string GetContent(Edge* edge);
@@ -217,11 +219,7 @@ struct Builder {
   State* state_;
   const BuildConfig& config_;
   Plan plan_;
-#if __cplusplus < 201703L
-  std::auto_ptr<CommandRunner> command_runner_;
-#else
-  std::unique_ptr<CommandRunner> command_runner_;  // auto_ptr was removed in C++17.
-#endif
+  std::unique_ptr<CommandRunner> command_runner_;
   Status* status_;
 
  private:
@@ -236,6 +234,7 @@ struct Builder {
   /// Time the build started.
   int64_t start_time_millis_;
 
+  std::string lock_file_path_;
   DiskInterface* disk_interface_;
   DependencyScan scan_;
 

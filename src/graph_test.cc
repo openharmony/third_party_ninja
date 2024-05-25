@@ -977,3 +977,4 @@ TEST_F(GraphTest, PhonyDepsMtimes) {
   EXPECT_EQ(out1->mtime(), out1Mtime1);
   EXPECT_TRUE(out1->dirty());
 }
+

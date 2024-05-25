@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -eu
 # Copyright 2020 Google Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,6 @@
 #
 ################################################################################
 
-set -eu
 cmake -Bbuild-cmake -H.
 cmake --build build-cmake
 

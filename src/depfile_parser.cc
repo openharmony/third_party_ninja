@@ -294,12 +294,12 @@ bool DepfileParser::Parse(string* content, string* err) {
     yy30:
         ++in;
         {
-          // 2N backslashes plus space -> 2N backslashes, end of filename.
-          int len = (int)(in - start);
-          if (out < start)
-              memset(out, '\\', len - 1);
-          out += len - 1;
-          break;
+            // 2N backslashes plus space -> 2N backslashes, end of filename.
+            int len = (int)(in - start);
+            if (out < start)
+                memset(out, '\\', len - 1);
+            out += len - 1;
+            break;
         }
     yy32:
         yych = *++in;
@@ -342,15 +342,15 @@ bool DepfileParser::Parse(string* content, string* err) {
         if (pos == ins_.end()) {
             if (is_dependency) {
                 if (poisoned_input) {
-                  *err = "inputs may not also have inputs";
-                  return false;
+                    *err = "inputs may not also have inputs";
+                    return false;
                 }
                 // New input.
                 ins_.push_back(piece);
             } else {
                 // Check for a new output.
                 if (std::find(outs_.begin(), outs_.end(), piece) == outs_.end())
-                  outs_.push_back(piece);
+                    outs_.push_back(piece);
                 }
             } else if (!is_dependency) {
                 // We've passed an input on the left side; reject new inputs.
@@ -366,7 +366,7 @@ bool DepfileParser::Parse(string* content, string* err) {
 }
     if (!have_target && !is_empty) {
         *err = "expected ':' in depfile";
-      return false;
+        return false;
     }
     return true;
 }

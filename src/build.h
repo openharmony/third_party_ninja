@@ -202,8 +202,6 @@ struct Builder {
     
     bool StartEdge(Edge* edge, std::string* err);
 
-    std::string GetContent(Edge* edge);
-
     /// Update status ninja logs following a command termination.
     /// @return false if the build can not proceed further due to a fatal error.
     bool FinishCommand(CommandRunner::Result* result, std::string* err);

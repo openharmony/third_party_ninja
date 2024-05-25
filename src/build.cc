@@ -628,81 +628,6 @@ bool Builder::AddTarget(Node* target, string* err) {
     return true;
 }
 
-static std::string &Trim(std::string &s)
-{
-    if (s.empty()) {
-        return s;
-    }
-    s.erase(0, s.find_first_not_of(" \t\r\n"));
-    s.erase(s.find_last_not_of(" \t\r\n") + 1);
-    return s;
-}
-
-static std::vector<std::string> SplitStringBySpace(std::string content) {
-    std::string space_delimiter = " ";
-    std::vector<std::string> words{};
-    size_t pos = 0;
-    std::string temp_content = content;
-    while ((pos = temp_content.find(space_delimiter)) != string::npos) {
-        std::string sub_str = temp_content.substr(0, pos);
-        std::string tmp = Trim(sub_str);
-        if (!tmp.empty()) {
-            words.push_back(tmp);
-        }
-        temp_content = temp_content.substr(pos + 1);
-    }
-    std::string tmp_last = Trim(temp_content);
-    if (!tmp_last.empty()) {
-        words.push_back(tmp_last);
-    }
-    return words;
-}
-
-static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive) {
-    if (whole_content.empty()) {
-        return content;
-    }
-
-    std::string temp_content = content;
-    if (is_whole_archive) {
-        temp_content += " -Wl,--whole-archive";
-    }
-
-    std::vector<std::string> whole_list = SplitStringBySpace(whole_content);
-    std::vector<std::string> content_list = SplitStringBySpace(temp_content);
-    for (const std::string &word : whole_list) {
-        auto it = std::find_if(content_list.begin(), content_list.end(), [&](const std::string& s) {
-            return s.find(word) != std::string::npos;
-        });
-        if (it != content_list.end()) {
-            content_list.push_back(*it);
-            content_list.erase(it);
-        }
-    }
-
-    std::string result = "";
-    for (int i = 0; i < content_list.size(); i++) {
-        result += content_list[i];
-        if (i != content_list.size() - 1) {
-            result += " ";
-        }
-    }
-    return result;
-}
-
-std::string Builder::GetContent(Edge* edge) {
-    std::string content = edge->GetBinding("rspfile_content");
-    std::string toolchain_whole_status =  edge->env_->LookupVariable("toolchain_whole_status");
-
-    if (toolchain_whole_status == "0") {
-        return SplicingWholeContent(content, edge->env_->LookupVariable("whole-archive"), true);
-    } else if (toolchain_whole_status == "1") {
-        return SplicingWholeContent(content, edge->env_->LookupVariable("no-whole-archive"), false);
-    } else {
-        return content;
-    }
-}
-
 bool Builder::AlreadyUpToDate() const {
     return !plan_.more_to_do();
 }
@@ -850,7 +775,7 @@ bool Builder::StartEdge(Edge* edge, string* err) {
     // XXX: this may also block; do we care?
     string rspfile = edge->GetUnescapedRspfile();
     if (!rspfile.empty()) {
-        string content = GetContent(edge);;
+        string content = edge->GetBinding("rspfile_content");
         if (!disk_interface_->WriteFile(rspfile, content))
             return false;
     }

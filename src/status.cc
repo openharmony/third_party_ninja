@@ -107,20 +107,20 @@ void StatusPrinter::RecalculateProgressPrediction() {
     // that is, if we have took at least 15 sec AND finished at least 5% of edges,
     // we can check whether our performance so far matches the previous one.
     if (use_previous_times && total_edges_ && finished_edges_ &&
-            (time_millis_ >= 15 * 1e3) &&
-            (((double)finished_edges_ / total_edges_) >= 0.05)) {
+        (time_millis_ >= 15 * 1e3) &&
+        (((double)finished_edges_ / total_edges_) >= 0.05)) {
         // Over the edges we've just run, how long did they take on average?
         double actual_average_cpu_time_millis =
-                (double)cpu_time_millis_ / finished_edges_;
+            (double)cpu_time_millis_ / finished_edges_;
         // What is the previous average, for the edges with such knowledge?
         double previous_average_cpu_time_millis =
-                (double)eta_predictable_cpu_time_total_millis_ /
-                eta_predictable_edges_total_;
+            (double)eta_predictable_cpu_time_total_millis_ /
+            eta_predictable_edges_total_;
 
         double ratio = std::max(previous_average_cpu_time_millis,
-                                                        actual_average_cpu_time_millis) /
-                                      std::min(previous_average_cpu_time_millis,
-                                                        actual_average_cpu_time_millis);
+            actual_average_cpu_time_millis) /
+            std::min(previous_average_cpu_time_millis,
+            actual_average_cpu_time_millis);
 
         // Let's say that the average times should differ by less than 10x
         use_previous_times = ratio < 10;
@@ -133,8 +133,8 @@ void StatusPrinter::RecalculateProgressPrediction() {
         return;
 
     int edges_with_unknown_runtime = use_previous_times
-                                                                              ? eta_unpredictable_edges_remaining_
-                                                                              : (total_edges_ - finished_edges_);
+        ? eta_unpredictable_edges_remaining_
+        : (total_edges_ - finished_edges_);
 
     // Given the time elapsed on the edges we've just run,
     // and the runtime of the edges for which we know previous runtime,
@@ -142,10 +142,10 @@ void StatusPrinter::RecalculateProgressPrediction() {
     int64_t edges_known_runtime_total_millis = cpu_time_millis_;
     if (use_previous_times)
         edges_known_runtime_total_millis +=
-                eta_predictable_cpu_time_remaining_millis_;
+            eta_predictable_cpu_time_remaining_millis_;
 
     double average_cpu_time_millis =
-            (double)edges_known_runtime_total_millis / edges_with_known_runtime;
+        (double)edges_known_runtime_total_millis / edges_with_known_runtime;
 
     // For the edges for which we do not have the previous runtime,
     // let's assume that their average runtime is the same as for the other edges,
@@ -155,12 +155,12 @@ void StatusPrinter::RecalculateProgressPrediction() {
 
     // And therefore we can predict the remaining and total runtimes.
     double total_cpu_time_remaining_millis =
-            unpredictable_cpu_time_remaining_millis;
+        unpredictable_cpu_time_remaining_millis;
     if (use_previous_times)
         total_cpu_time_remaining_millis +=
-                eta_predictable_cpu_time_remaining_millis_;
+            eta_predictable_cpu_time_remaining_millis_;
     double total_cpu_time_millis =
-            cpu_time_millis_ + total_cpu_time_remaining_millis;
+        cpu_time_millis_ + total_cpu_time_remaining_millis;
     if (total_cpu_time_millis == 0.0)
         return;
 
@@ -181,7 +181,7 @@ void StatusPrinter::BuildEdgeFinished(Edge* edge, int64_t start_time_millis,
     if (edge->prev_elapsed_time_millis != -1) {
         --eta_predictable_edges_remaining_;
         eta_predictable_cpu_time_remaining_millis_ -=
-                edge->prev_elapsed_time_millis;
+            edge->prev_elapsed_time_millis;
     } else
         --eta_unpredictable_edges_remaining_;
 
@@ -200,13 +200,13 @@ void StatusPrinter::BuildEdgeFinished(Edge* edge, int64_t start_time_millis,
     if (!success) {
         string outputs;
         for (vector<Node*>::const_iterator o = edge->outputs_.begin();
-                  o != edge->outputs_.end(); ++o)
+                o != edge->outputs_.end(); ++o)
             outputs += (*o)->path() + " ";
 
         if (printer_.supports_color()) {
-                printer_.PrintOnNewLine("\x1B[31m" "FAILED: " "\x1B[0m" + outputs + "\n");
+            printer_.PrintOnNewLine("\x1B[31m" "FAILED: " "\x1B[0m" + outputs + "\n");
         } else {
-                printer_.PrintOnNewLine("FAILED: " + outputs + "\n");
+            printer_.PrintOnNewLine("FAILED: " + outputs + "\n");
         }
         printer_.PrintOnNewLine(edge->EvaluateCommand() + "\n");
     }
@@ -230,14 +230,14 @@ void StatusPrinter::BuildEdgeFinished(Edge* edge, int64_t start_time_millis,
             final_output = output;
 
 #ifdef _WIN32
-        // Fix extra CR being added on Windows, writing out CR CR LF (#773)
-        _setmode(_fileno(stdout), _O_BINARY);  // Begin Windows extra CR fix
+    // Fix extra CR being added on Windows, writing out CR CR LF (#773)
+    _setmode(_fileno(stdout), _O_BINARY);  // Begin Windows extra CR fix
 #endif
 
-        printer_.PrintOnNewLine(final_output);
+    printer_.PrintOnNewLine(final_output);
 
 #ifdef _WIN32
-        _setmode(_fileno(stdout), _O_TEXT);  // End Windows extra CR fix
+    _setmode(_fileno(stdout), _O_TEXT);  // End Windows extra CR fix
 #endif
     }
 }
@@ -356,7 +356,7 @@ string StatusPrinter::FormatProgressStatus(const char* progress_status_format,
                 }
 
                 const bool print_with_hours =
-                        elapsed_sec >= 60 * 60 || eta_sec >= 60 * 60;
+                    elapsed_sec >= 60 * 60 || eta_sec >= 60 * 60;
 
                 double sec = -1;
                 switch (*s) {
@@ -394,7 +394,7 @@ string StatusPrinter::FormatProgressStatus(const char* progress_status_format,
             // Percentage of time spent out of the predicted time total
             case 'P': {
                 snprintf(buf, sizeof(buf), "%3i%%",
-                                  (int)(100. * time_predicted_percentage_));
+                    (int)(100. * time_predicted_percentage_));
                 out += buf;
                 break;
             }
@@ -413,7 +413,7 @@ string StatusPrinter::FormatProgressStatus(const char* progress_status_format,
 
 void StatusPrinter::PrintStatus(const Edge* edge, int64_t time_millis) {
     if (config_.verbosity == BuildConfig::QUIET
-            || config_.verbosity == BuildConfig::NO_STATUS_UPDATE)
+        || config_.verbosity == BuildConfig::NO_STATUS_UPDATE)
         return;
 
     RecalculateProgressPrediction();
@@ -425,10 +425,9 @@ void StatusPrinter::PrintStatus(const Edge* edge, int64_t time_millis) {
         to_print = edge->GetBinding("command");
 
     to_print = FormatProgressStatus(progress_status_format_, time_millis)
-            + to_print;
+        + to_print;
 
-    printer_.Print(to_print,
-                                  force_full_command ? LinePrinter::FULL : LinePrinter::ELIDE);
+    printer_.Print(to_print,force_full_command ? LinePrinter::FULL : LinePrinter::ELIDE);
 }
 
 void StatusPrinter::Warning(const char* msg, ...) {

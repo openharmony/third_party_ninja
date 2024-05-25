@@ -187,7 +187,7 @@ bool DepfileParser::Parse(string* content, string* err) {
                 } else {
                     // Check for a new output.
                     if (std::find(outs_.begin(), outs_.end(), piece) == outs_.end())
-                      outs_.push_back(piece);
+                        outs_.push_back(piece);
                 }
             } else if (!is_dependency) {
                 // We've passed an input on the left side; reject new inputs.

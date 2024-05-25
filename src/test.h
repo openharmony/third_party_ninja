@@ -28,20 +28,20 @@ struct Node;
 /// A base test fixture that includes a State object with a
 /// builtin "cat" rule.
 struct StateTestWithBuiltinRules : public testing::Test {
-  StateTestWithBuiltinRules();
+    StateTestWithBuiltinRules();
 
-  /// Add a "cat" rule to \a state.  Used by some tests; it's
-  /// otherwise done by the ctor to state_.
-  void AddCatRule(State* state);
+    /// Add a "cat" rule to \a state.  Used by some tests; it's
+    /// otherwise done by the ctor to state_.
+    void AddCatRule(State* state);
 
-  /// Short way to get a Node by its path from state_.
-  Node* GetNode(const std::string& path);
+    /// Short way to get a Node by its path from state_.
+    Node* GetNode(const std::string& path);
 
-  State state_;
+    State state_;
 };
 
 void AssertParse(State* state, const char* input,
-                 ManifestParserOptions = ManifestParserOptions());
+                                  ManifestParserOptions = ManifestParserOptions());
 void AssertHash(const char* expected, uint64_t actual);
 void VerifyGraph(const State& state);
 
@@ -49,81 +49,81 @@ void VerifyGraph(const State& state);
 /// of disk state.  It also logs file accesses and directory creations
 /// so it can be used by tests to verify disk access patterns.
 struct VirtualFileSystem : public DiskInterface {
-  VirtualFileSystem() : now_(1) {}
+    VirtualFileSystem() : now_(1) {}
 
-  /// "Create" a file with contents.
-  void Create(const std::string& path, const std::string& contents);
+    /// "Create" a file with contents.
+    void Create(const std::string& path, const std::string& contents);
 
-  /// Tick "time" forwards; subsequent file operations will be newer than
-  /// previous ones.
-  int Tick() {
-    return ++now_;
-  }
+    /// Tick "time" forwards; subsequent file operations will be newer than
+    /// previous ones.
+    int Tick() {
+        return ++now_;
+    }
 
-  // DiskInterface
-  virtual TimeStamp Stat(const std::string& path, std::string* err) const;
-  virtual bool WriteFile(const std::string& path, const std::string& contents);
-  virtual bool MakeDir(const std::string& path);
-  virtual Status ReadFile(const std::string& path, std::string* contents,
-                          std::string* err);
-  virtual int RemoveFile(const std::string& path);
+    // DiskInterface
+    virtual TimeStamp Stat(const std::string& path, std::string* err) const;
+    virtual bool WriteFile(const std::string& path, const std::string& contents);
+    virtual bool MakeDir(const std::string& path);
+    virtual Status ReadFile(const std::string& path, std::string* contents,
+                                                    std::string* err);
+    virtual int RemoveFile(const std::string& path);
 
-  /// An entry for a single in-memory file.
-  struct Entry {
-    int mtime;
-    std::string stat_error;  // If mtime is -1.
-    std::string contents;
-  };
+    /// An entry for a single in-memory file.
+    struct Entry {
+        int mtime;
+        std::string stat_error;  // If mtime is -1.
+        std::string contents;
+    };
 
-  std::vector<std::string> directories_made_;
-  std::vector<std::string> files_read_;
-  typedef std::map<std::string, Entry> FileMap;
-  FileMap files_;
-  std::set<std::string> files_removed_;
-  std::set<std::string> files_created_;
+    std::vector<std::string> directories_made_;
+    std::vector<std::string> files_read_;
+    typedef std::map<std::string, Entry> FileMap;
+    FileMap files_;
+    std::set<std::string> files_removed_;
+    std::set<std::string> files_created_;
 
-  /// A simple fake timestamp for file operations.
-  int now_;
+    /// A simple fake timestamp for file operations.
+    int now_;
 };
 
 struct ScopedTempDir {
-  /// Create a temporary directory and chdir into it.
-  void CreateAndEnter(const std::string& name);
+    /// Create a temporary directory and chdir into it.
+    void CreateAndEnter(const std::string& name);
 
-  /// Clean up the temporary directory.
-  void Cleanup();
+    /// Clean up the temporary directory.
+    void Cleanup();
 
-  /// The temp directory containing our dir.
-  std::string start_dir_;
-  /// The subdirectory name for our dir, or empty if it hasn't been set up.
-  std::string temp_dir_name_;
+    /// The temp directory containing our dir.
+    std::string start_dir_;
+    /// The subdirectory name for our dir, or empty if it hasn't been set up.
+    std::string temp_dir_name_;
 };
 
 /// A class that records a file path and ensures that it is removed
 /// on destruction. This ensures that tests do not keep stale files in the
 /// current directory where they run, even in case of assertion failure.
 struct ScopedFilePath {
-  /// Constructor just records the file path.
-  ScopedFilePath(const std::string& path) : path_(path) {}
-  ScopedFilePath(const char* path) : path_(path) {}
+    /// Constructor just records the file path.
+    ScopedFilePath(const std::string& path) : path_(path) {}
+    ScopedFilePath(const char* path) : path_(path) {}
 
-  /// Allow move operations.
-  ScopedFilePath(ScopedFilePath&&) noexcept;
-  ScopedFilePath& operator=(ScopedFilePath&&) noexcept;
+    /// Allow move operations.
+    ScopedFilePath(ScopedFilePath&&) noexcept;
+    ScopedFilePath& operator=(ScopedFilePath&&) noexcept;
 
-  /// Destructor destroys the file, unless Release() was called.
-  ~ScopedFilePath();
+    /// Destructor destroys the file, unless Release() was called.
+    ~ScopedFilePath();
 
-  /// Release the file, the destructor will not remove the file.
-  void Release();
+    /// Release the file, the destructor will not remove the file.
+    void Release();
 
-  const char* c_str() const { return path_.c_str(); }
-  const std::string& path() const { return path_; }
-  bool released() const { return released_; }
+    const char* c_str() const { return path_.c_str(); }
+    const std::string& path() const { return path_; }
+    bool released() const { return released_; }
 
- private:
-  std::string path_;
-  bool released_ = false;
+  private:
+    std::string path_;
+    bool released_ = false;
 };
 
 #endif // NINJA_TEST_H_

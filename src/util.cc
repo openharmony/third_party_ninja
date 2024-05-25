@@ -154,29 +154,29 @@ void CanonicalizePath(char* path, size_t* len, uint64_t* slash_bits) {
     // as this one should never be removed from the result.
     if (IsPathSeparator(*src)) {
 #ifdef _WIN32
-    // Windows network path starts with //
-    if (src + 2 <= end && IsPathSeparator(src[1])) {
-        src += 2;
-        dst += 2;
-    } else {
+        // Windows network path starts with //
+        if (src + 2 <= end && IsPathSeparator(src[1])) {
+            src += 2;
+            dst += 2;
+        } else {
+            ++src;
+            ++dst;
+        }
+#else
         ++src;
         ++dst;
-    }
-#else
-    ++src;
-    ++dst;
 #endif
-    dst_start = dst;
-  } else {
-      // For relative paths, skip any leading ../ as these are quite common
-      // to reference source files in build plans, and doing this here makes
-      // the loop work below faster in general.
-      while (src + 3 <= end && src[0] == '.' && src[1] == '.' &&
-             IsPathSeparator(src[2])) {
-          src += 3;
-          dst += 3;
-      }
-  }
+        dst_start = dst;
+    } else {
+        // For relative paths, skip any leading ../ as these are quite common
+        // to reference source files in build plans, and doing this here makes
+        // the loop work below faster in general.
+        while (src + 3 <= end && src[0] == '.' && src[1] == '.' &&
+                      IsPathSeparator(src[2])) {
+            src += 3;
+            dst += 3;
+        }
+    }
 
     // Loop over all components of the paths _except_ the last one, in
     // order to simplify the loop's code and make it faster.
@@ -184,108 +184,108 @@ void CanonicalizePath(char* path, size_t* len, uint64_t* slash_bits) {
     char* dst0 = dst;
     for (; src < end; src = src_next) {
 #ifndef _WIN32
-    // Use memchr() for faster lookups thanks to optimized C library
-    // implementation. `hyperfine canon_perftest` shows a significant
-    // difference (e,g, 484ms vs 437ms).
-    const char* next_sep =
-        static_cast<const char*>(::memchr(src, '/', end - src));
-    if (!next_sep) {
-        // This is the last component, will be handled out of the loop.
-        break;
-    }
-#else
-    // Need to check for both '/' and '\\' so do not use memchr().
-    // Cannot use strpbrk() because end[0] can be \0 or something else!
-    const char* next_sep = src;
-    while (next_sep != end && !IsPathSeparator(*next_sep))
-        ++next_sep;
-    if (next_sep == end) {
-        // This is the last component, will be handled out of the loop.
-        break;
-    }
-#endif
-    // Position for next loop iteration.
-    src_next = next_sep + 1;
-    // Length of the component, excluding trailing directory.
-    size_t component_len = next_sep - src;
-
-    if (component_len <= 2) {
-        if (component_len == 0) {
-            continue;  // Ignore empty component, e.g. 'foo//bar' -> 'foo/bar'.
+        // Use memchr() for faster lookups thanks to optimized C library
+        // implementation. `hyperfine canon_perftest` shows a significant
+        // difference (e,g, 484ms vs 437ms).
+        const char* next_sep =
+                static_cast<const char*>(::memchr(src, '/', end - src));
+        if (!next_sep) {
+            // This is the last component, will be handled out of the loop.
+            break;
         }
+#else
+        // Need to check for both '/' and '\\' so do not use memchr().
+        // Cannot use strpbrk() because end[0] can be \0 or something else!
+        const char* next_sep = src;
+        while (next_sep != end && !IsPathSeparator(*next_sep))
+            ++next_sep;
+        if (next_sep == end) {
+            // This is the last component, will be handled out of the loop.
+            break;
+        }
+#endif
+        // Position for next loop iteration.
+        src_next = next_sep + 1;
+        // Length of the component, excluding trailing directory.
+        size_t component_len = next_sep - src;
+
+        if (component_len <= 2) {
+            if (component_len == 0) {
+                continue;  // Ignore empty component, e.g. 'foo//bar' -> 'foo/bar'.
+            }
+            if (src[0] == '.') {
+                if (component_len == 1) {
+                    continue;  // Ignore '.' component, e.g. './foo' -> 'foo'.
+                } else if (src[1] == '.') {
+                    // Process the '..' component if found. Back up if possible.
+                    if (component_count > 0) {
+                        // Move back to start of previous component.
+                        --component_count;
+                        while (--dst > dst0 && !IsPathSeparator(dst[-1])) {
+                            // nothing to do here, decrement happens before condition check.
+                        }
+                    } else {
+                        dst[0] = '.';
+                        dst[1] = '.';
+                        dst[2] = src[2];
+                        dst += 3;
+                    }
+                    continue;
+                }
+            }
+        }
+        ++component_count;
+
+        // Copy or skip component, including trailing directory separator.
+        if (dst != src) {
+            ::memmove(dst, src, src_next - src);
+        }
+        dst += src_next - src;
+    }
+
+    // Handling the last component that does not have a trailing separator.
+    // The logic here is _slightly_ different since there is no trailing
+    // directory separator.
+    size_t component_len = end - src;
+    do {
+        if (component_len == 0)
+            break;  // Ignore empty component (e.g. 'foo//' -> 'foo/')
         if (src[0] == '.') {
-            if (component_len == 1) {
-                continue;  // Ignore '.' component, e.g. './foo' -> 'foo'.
-            } else if (src[1] == '.') {
-                // Process the '..' component if found. Back up if possible.
+            if (component_len == 1)
+                break;  // Ignore trailing '.' (e.g. 'foo/.' -> 'foo/')
+            if (component_len == 2 && src[1] == '.') {
+                // Handle '..'. Back up if possible.
                 if (component_count > 0) {
-                  // Move back to start of previous component.
-                  --component_count;
-                  while (--dst > dst0 && !IsPathSeparator(dst[-1])) {
-                    // nothing to do here, decrement happens before condition check.
-                  }
+                    while (--dst > dst0 && !IsPathSeparator(dst[-1])) {
+                        // nothing to do here, decrement happens before condition check.
+                    }
                 } else {
                     dst[0] = '.';
                     dst[1] = '.';
-                    dst[2] = src[2];
-                    dst += 3;
+                    dst += 2;
+                    // No separator to add here.
                 }
-                continue;
+                break;
             }
         }
+        // Skip or copy last component, no trailing separator.
+        if (dst != src) {
+            ::memmove(dst, src, component_len);
+        }
+        dst += component_len;
+    } while (0);
+
+    // Remove trailing path separator if any, but keep the initial
+    // path separator(s) if there was one (or two on Windows).
+    if (dst > dst_start && IsPathSeparator(dst[-1]))
+        dst--;
+
+    if (dst == start) {
+        // Handle special cases like "aa/.." -> "."
+        *dst++ = '.';
     }
-    ++component_count;
 
-      // Copy or skip component, including trailing directory separator.
-      if (dst != src) {
-          ::memmove(dst, src, src_next - src);
-      }
-      dst += src_next - src;
-  }
-
-  // Handling the last component that does not have a trailing separator.
-  // The logic here is _slightly_ different since there is no trailing
-  // directory separator.
-  size_t component_len = end - src;
-  do {
-      if (component_len == 0)
-          break;  // Ignore empty component (e.g. 'foo//' -> 'foo/')
-      if (src[0] == '.') {
-          if (component_len == 1)
-              break;  // Ignore trailing '.' (e.g. 'foo/.' -> 'foo/')
-          if (component_len == 2 && src[1] == '.') {
-              // Handle '..'. Back up if possible.
-              if (component_count > 0) {
-                  while (--dst > dst0 && !IsPathSeparator(dst[-1])) {
-                      // nothing to do here, decrement happens before condition check.
-                  }
-              } else {
-                  dst[0] = '.';
-                  dst[1] = '.';
-                  dst += 2;
-                  // No separator to add here.
-              }
-              break;
-          }
-      }
-      // Skip or copy last component, no trailing separator.
-      if (dst != src) {
-        ::memmove(dst, src, component_len);
-      }
-      dst += component_len;
-  } while (0);
-
-  // Remove trailing path separator if any, but keep the initial
-  // path separator(s) if there was one (or two on Windows).
-  if (dst > dst_start && IsPathSeparator(dst[-1]))
-    dst--;
-
-  if (dst == start) {
-    // Handle special cases like "aa/.." -> "."
-    *dst++ = '.';
-  }
-
-  *len = dst - start;  // dst points after the trailing char here.
+    *len = dst - start;  // dst points after the trailing char here.
 #ifdef _WIN32
     uint64_t bits = 0;
     uint64_t bits_mask = 1;
@@ -363,11 +363,11 @@ void GetShellEscapedString(const string& input, string* result) {
 
     string::const_iterator span_begin = input.begin();
     for (string::const_iterator it = input.begin(), end = input.end(); it != end;
-            ++it) {
+              ++it) {
         if (*it == kQuote) {
-          result->append(span_begin, it);
-          result->append(kEscapeSequence);
-          span_begin = it;
+            result->append(span_begin, it);
+            result->append(kEscapeSequence);
+            span_begin = it;
         }
     }
     result->append(span_begin, input.end());
@@ -389,25 +389,25 @@ void GetWin32EscapedString(const string& input, string* result) {
     size_t consecutive_backslash_count = 0;
     string::const_iterator span_begin = input.begin();
     for (string::const_iterator it = input.begin(), end = input.end(); it != end;
-        ++it) {
+              ++it) {
         switch (*it) {
             case kBackslash:
-            ++consecutive_backslash_count;
-            break;
-        case kQuote:
-            result->append(span_begin, it);
-            result->append(consecutive_backslash_count + 1, kBackslash);
-            span_begin = it;
-            consecutive_backslash_count = 0;
-            break;
-        default:
-            consecutive_backslash_count = 0;
-            break;
+                ++consecutive_backslash_count;
+                break;
+            case kQuote:
+                result->append(span_begin, it);
+                result->append(consecutive_backslash_count + 1, kBackslash);
+                span_begin = it;
+                consecutive_backslash_count = 0;
+                break;
+            default:
+                consecutive_backslash_count = 0;
+                break;
         }
-  }
-  result->append(span_begin, input.end());
-  result->append(consecutive_backslash_count, kBackslash);
-  result->push_back(kQuote);
+    }
+    result->append(span_begin, input.end());
+    result->append(consecutive_backslash_count, kBackslash);
+    result->push_back(kQuote);
 }
 
 int ReadFile(const string& path, string* contents, string* err) {
@@ -416,7 +416,7 @@ int ReadFile(const string& path, string* contents, string* err) {
     // than using the generic fopen code below.
     err->clear();
     HANDLE f = ::CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
-                             OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+                                                      OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (f == INVALID_HANDLE_VALUE) {
         err->assign(GetLastErrorString());
         return -ENOENT;
@@ -433,7 +433,7 @@ int ReadFile(const string& path, string* contents, string* err) {
         }
         if (len == 0)
             break;
-         contents->append(buf, len);
+        contents->append(buf, len);
     }
     ::CloseHandle(f);
     return 0;
@@ -450,7 +450,7 @@ int ReadFile(const string& path, string* contents, string* err) {
 #else
     struct stat st;
     if (fstat(fileno(f), &st) < 0) {
-    #endif
+#endif
         err->assign(strerror(errno));
         fclose(f);
         return -errno;
@@ -494,16 +494,16 @@ void SetCloseOnExec(int fd) {
 
 
 const char* SpellcheckStringV(const string& text,
-                              const vector<const char*>& words) {
+                                                            const vector<const char*>& words) {
     const bool kAllowReplacements = true;
     const int kMaxValidEditDistance = 3;
 
     int min_distance = kMaxValidEditDistance + 1;
     const char* result = NULL;
     for (vector<const char*>::const_iterator i = words.begin();
-         i != words.end(); ++i) {
+              i != words.end(); ++i) {
         int distance = EditDistance(*i, text, kAllowReplacements,
-                                  kMaxValidEditDistance);
+                                                                kMaxValidEditDistance);
         if (distance < min_distance) {
             min_distance = distance;
             result = *i;
@@ -531,15 +531,15 @@ string GetLastErrorString() {
 
     char* msg_buf;
     FormatMessageA(
-          FORMAT_MESSAGE_ALLOCATE_BUFFER |
-          FORMAT_MESSAGE_FROM_SYSTEM |
-          FORMAT_MESSAGE_IGNORE_INSERTS,
-          NULL,
-          err,
-          MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),
-          (char*)&msg_buf,
-          0,
-          NULL);
+                FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                FORMAT_MESSAGE_FROM_SYSTEM |
+                FORMAT_MESSAGE_IGNORE_INSERTS,
+                NULL,
+                err,
+                MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),
+                (char*)&msg_buf,
+                0,
+                NULL);
 
     if (msg_buf == nullptr) {
         char fallback_msg[128] = {0};
@@ -634,7 +634,7 @@ struct MountPoint {
         mountPoint = pieces[4];
         options = SplitStringPiece(pieces[5], ',');
         optionalFields =
-            vector<StringPiece>(&pieces[6], &pieces[optionalStart - 1]);
+                vector<StringPiece>(&pieces[6], &pieces[optionalStart - 1]);
         fsType = pieces[optionalStart];
         mountSource = pieces[optionalStart + 1];
         superOptions = SplitStringPiece(pieces[optionalStart + 2], ',');
@@ -669,7 +669,7 @@ struct CGroupSubSys {
         id = atoi(line.c_str());
         name = line.substr(second + 1);
         vector<StringPiece> pieces =
-            SplitStringPiece(StringPiece(line.c_str() + first + 1), ',');
+                SplitStringPiece(StringPiece(line.c_str() + first + 1), ',');
         for (size_t i = 0; i < pieces.size(); i++) {
             subsystems.push_back(pieces[i].AsString());
         }
@@ -731,7 +731,7 @@ int ParseCPUFromCGroup() {
     if (!quota.second || quota.first == -1)
         return -1;
     std::pair<int64_t, bool> period =
-        readCount(cpu->second + "/cpu.cfs_period_us");
+            readCount(cpu->second + "/cpu.cfs_period_us");
     if (!period.second)
         return -1;
     if (period.first == 0)
@@ -744,33 +744,33 @@ int GetProcessorCount() {
 #ifdef _WIN32
     DWORD cpuCount = 0;
 #ifndef _WIN64
-  // Need to use GetLogicalProcessorInformationEx to get real core count on
-  // machines with >64 cores. See https://stackoverflow.com/a/31209344/21475
-  DWORD len = 0;
-  if (!GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len)
-        && GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-      std::vector<char> buf(len);
-      int cores = 0;
-      if (GetLogicalProcessorInformationEx(RelationProcessorCore,
-            reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(
-              buf.data()), &len)) {
-          for (DWORD i = 0; i < len; ) {
-              auto info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(
-                  buf.data() + i);
-              if (info->Relationship == RelationProcessorCore &&
-                      info->Processor.GroupCount == 1) {
-                  for (KAFFINITY core_mask = info->Processor.GroupMask[0].Mask;
-                          core_mask; core_mask >>= 1) {
-                      cores += (core_mask & 1);
-                  }
-              }
-              i += info->Size;
-          }
-          if (cores != 0) {
-              cpuCount = cores;
-          }
-      }
-  }
+    // Need to use GetLogicalProcessorInformationEx to get real core count on
+    // machines with >64 cores. See https://stackoverflow.com/a/31209344/21475
+    DWORD len = 0;
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len)
+                && GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+        std::vector<char> buf(len);
+        int cores = 0;
+        if (GetLogicalProcessorInformationEx(RelationProcessorCore,
+                    reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(
+                        buf.data()), &len)) {
+            for (DWORD i = 0; i < len; ) {
+                auto info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(
+                        buf.data() + i);
+                if (info->Relationship == RelationProcessorCore &&
+                        info->Processor.GroupCount == 1) {
+                    for (KAFFINITY core_mask = info->Processor.GroupMask[0].Mask;
+                              core_mask; core_mask >>= 1) {
+                        cores += (core_mask & 1);
+                    }
+                }
+                i += info->Size;
+            }
+            if (cores != 0) {
+                cpuCount = cores;
+            }
+        }
+    }
 #endif
     if (cpuCount == 0) {
         cpuCount = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
@@ -779,9 +779,9 @@ int GetProcessorCount() {
     // reference:
     // https://docs.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_cpu_rate_control_information
     if (QueryInformationJobObject(NULL, JobObjectCpuRateControlInformation, &info,
-                                  sizeof(info), NULL)) {
+                                                                sizeof(info), NULL)) {
         if (info.ControlFlags & (JOB_OBJECT_CPU_RATE_CONTROL_ENABLE |
-                                 JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP)) {
+                                                          JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP)) {
             return cpuCount * info.CpuRate / 10000;
         }
     }
@@ -796,12 +796,12 @@ int GetProcessorCount() {
     // processors threads can run on. This happens when a CPU set limitation is
     // active, see https://github.com/ninja-build/ninja/issues/1278
 #if defined(__FreeBSD__)
-  cpuset_t mask;
-  CPU_ZERO(&mask);
-  if (cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1, sizeof(mask),
-      &mask) == 0) {
-      return CPU_COUNT(&mask);
-  }
+    cpuset_t mask;
+    CPU_ZERO(&mask);
+    if (cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_TID, -1, sizeof(mask),
+        &mask) == 0) {
+        return CPU_COUNT(&mask);
+    }
 #elif defined(CPU_COUNT)
     cpu_set_t set;
     if (sched_getaffinity(getpid(), sizeof(set), &set) == 0) {
@@ -833,7 +833,7 @@ static double CalculateProcessorLoad(uint64_t idle_ticks, uint64_t total_ticks)
     } else {
         // Calculate load.
         double idle_to_total_ratio =
-            ((double)idle_ticks_since_last_time) / total_ticks_since_last_time;
+                ((double)idle_ticks_since_last_time) / total_ticks_since_last_time;
         double load_since_last_call = 1.0 - idle_to_total_ratio;
 
         // Filter/smooth result when possible.
@@ -859,24 +859,24 @@ static uint64_t FileTimeToTickCount(const FILETIME & ft)
 }
 
 double GetLoadAverage() {
-  FILETIME idle_time, kernel_time, user_time;
-  BOOL get_system_time_succeeded =
-      GetSystemTimes(&idle_time, &kernel_time, &user_time);
+    FILETIME idle_time, kernel_time, user_time;
+    BOOL get_system_time_succeeded =
+            GetSystemTimes(&idle_time, &kernel_time, &user_time);
 
-  double posix_compatible_load;
-  if (get_system_time_succeeded) {
-      uint64_t idle_ticks = FileTimeToTickCount(idle_time);
+    double posix_compatible_load;
+    if (get_system_time_succeeded) {
+        uint64_t idle_ticks = FileTimeToTickCount(idle_time);
 
-      // kernel_time from GetSystemTimes already includes idle_time.
-      uint64_t total_ticks =
-          FileTimeToTickCount(kernel_time) + FileTimeToTickCount(user_time);
+        // kernel_time from GetSystemTimes already includes idle_time.
+        uint64_t total_ticks =
+                FileTimeToTickCount(kernel_time) + FileTimeToTickCount(user_time);
 
-      double processor_load = CalculateProcessorLoad(idle_ticks, total_ticks);
-      posix_compatible_load = processor_load * GetProcessorCount();
+        double processor_load = CalculateProcessorLoad(idle_ticks, total_ticks);
+        posix_compatible_load = processor_load * GetProcessorCount();
 
-      } else {
-          posix_compatible_load = -0.0;
-      }
+    } else {
+        posix_compatible_load = -0.0;
+    }
 
     return posix_compatible_load;
 }
@@ -886,32 +886,32 @@ double GetLoadAverage() {
 }
 #elif defined(_AIX)
 double GetLoadAverage() {
-  perfstat_cpu_total_t cpu_stats;
-  if (perfstat_cpu_total(NULL, &cpu_stats, sizeof(cpu_stats), 1) < 0) {
-      return -0.0f;
-  }
+    perfstat_cpu_total_t cpu_stats;
+    if (perfstat_cpu_total(NULL, &cpu_stats, sizeof(cpu_stats), 1) < 0) {
+        return -0.0f;
+    }
 
-  // Calculation taken from comment in libperfstats.h
-  return double(cpu_stats.loadavg[0]) / double(1 << SBITS);
+    // Calculation taken from comment in libperfstats.h
+    return double(cpu_stats.loadavg[0]) / double(1 << SBITS);
 }
 #elif defined(__UCLIBC__) || (defined(__BIONIC__) && __ANDROID_API__ < 29)
 double GetLoadAverage() {
     struct sysinfo si;
     if (sysinfo(&si) != 0)
-      return -0.0f;
+        return -0.0f;
     return 1.0 / (1 << SI_LOAD_SHIFT) * si.loads[0];
 }
 #elif defined(__HAIKU__)
 double GetLoadAverage() {
-    return -0.0f;
+        return -0.0f;
 }
 #else
 double GetLoadAverage() {
     double loadavg[3] = { 0.0f, 0.0f, 0.0f };
     if (getloadavg(loadavg, 3) < 0) {
-      // Maybe we should return an error here or the availability of
-      // getloadavg(3) should be checked when ninja is configured.
-      return -0.0f;
+        // Maybe we should return an error here or the availability of
+        // getloadavg(3) should be checked when ninja is configured.
+        return -0.0f;
     }
     return loadavg[0];
 }
@@ -919,18 +919,18 @@ double GetLoadAverage() {
 
 string ElideMiddle(const string& str, size_t width) {
     switch (width) {
-        case 0: return "";
-        case 1: return ".";
-        case 2: return "..";
-        case 3: return "...";
+            case 0: return "";
+            case 1: return ".";
+            case 2: return "..";
+            case 3: return "...";
     }
     const int kMargin = 3;  // Space for "...".
     string result = str;
     if (result.size() > width) {
-      size_t elide_size = (width - kMargin) / 2;
-      result = result.substr(0, elide_size)
-        + "..."
-        + result.substr(result.size() - elide_size, elide_size);
+        size_t elide_size = (width - kMargin) / 2;
+        result = result.substr(0, elide_size)
+            + "..."
+            + result.substr(result.size() - elide_size, elide_size);
     }
     return result;
 }
@@ -938,7 +938,7 @@ string ElideMiddle(const string& str, size_t width) {
 bool Truncate(const string& path, size_t size, string* err) {
 #ifdef _WIN32
     int fh = _sopen(path.c_str(), _O_RDWR | _O_CREAT, _SH_DENYNO,
-                    _S_IREAD | _S_IWRITE);
+                                    _S_IREAD | _S_IWRITE);
     int success = _chsize(fh, size);
     _close(fh);
 #else

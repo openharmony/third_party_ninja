@@ -293,7 +293,7 @@ bool Plan::CleanNode(DependencyScan* scan, Node* node, string* err) {
             // wanted.
             bool outputs_dirty = false;
             if (!scan->RecomputeOutputsDirty(*oe, most_recent_input,
-                    &outputs_dirty, err)) {
+                &outputs_dirty, err)) {
                 return false;
             }
             if (!outputs_dirty) {
@@ -752,7 +752,8 @@ static std::string &Trim(std::string &s)
     return s;
 }
 
-static std::vector<std::string> SplitStringBySpace(std::string content) {
+static std::vector<std::string> SplitStringBySpace(std::string content) 
+{
     std::string space_delimiter = " ";
     std::vector<std::string> words{};
     size_t pos = 0;

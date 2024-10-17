@@ -752,7 +752,7 @@ static std::string &Trim(std::string &s)
     return s;
 }
 
-static std::vector<std::string> SplitStringBySpace(std::string content) 
+static std::vector<std::string> SplitStringBySpace(std::string content)
 {
     std::string space_delimiter = " ";
     std::vector<std::string> words{};
@@ -773,7 +773,8 @@ static std::vector<std::string> SplitStringBySpace(std::string content)
     return words;
 }
 
-static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive) {
+static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive)
+{
     if (whole_content.empty()) {
         return content;
     }
@@ -805,7 +806,8 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
     return result;
 }
 
-std::string Builder::GetContent(Edge* edge) {
+std::string Builder::GetContent(Edge* edge)
+{
     std::string content = edge->GetBinding("rspfile_content");
     std::string toolchain_whole_status =  edge->env_->LookupVariable("toolchain_whole_status");
 
@@ -881,7 +883,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     if (!deps_type.empty()) {
         string extract_err;
         if (!ExtractDeps(result, deps_type, deps_prefix, &deps_nodes,
-                &extract_err) && result->success()) {
+            &extract_err) && result->success()) {
             if (!result->output.empty())
                 result->output.append("\n");
             result->output.append(extract_err);
@@ -896,7 +898,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
     running_edges_.erase(it);
 
     status_->BuildEdgeFinished(edge, start_time_millis, end_time_millis,
-                                                          result->success(), result->output);
+        result->success(), result->output);
 
     // The rest of this function only applies to successful commands.
     if (!result->success()) {
@@ -949,7 +951,7 @@ bool Builder::FinishCommand(CommandRunner::Result* result, string* err) {
 
     if (scan_.build_log()) {
         if (!scan_.build_log()->RecordCommand(edge, start_time_millis,
-                end_time_millis, record_mtime)) {
+            end_time_millis, record_mtime)) {
             *err = string("Error writing to build log: ") + strerror(errno);
             return false;
         }

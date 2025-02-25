@@ -747,8 +747,19 @@ static std::string &Trim(std::string &s)
     if (s.empty()) {
         return s;
     }
-    s.erase(0, s.find_first_not_of(" \t\r\n"));
-    s.erase(s.find_last_not_of(" \t\r\n") + 1);
+    
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        s.clear();
+        return s;
+    }
+    s.erase(0, start);
+
+    size_t end = s.find_last_not_of(" \t\r\n");
+    if (end != std::string::npos) {
+        s.erase(end + 1);
+    }
+
     return s;
 }
 

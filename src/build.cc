@@ -21,6 +21,10 @@
 #include <climits>
 #include <stdint.h>
 #include <functional>
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <sstream>
 
 #if defined(__SVR4) && defined(__sun)
 #include <sys/termios.h>
@@ -763,29 +767,33 @@ static std::string &Trim(std::string &s)
     return s;
 }
 
-static std::vector<std::string> SplitStringBySpace(std::string content)
-{
-    std::string space_delimiter = " ";
-    std::vector<std::string> words{};
-    size_t pos = 0;
-    std::string temp_content = content;
-    while ((pos = temp_content.find(space_delimiter)) != string::npos) {
-        std::string sub_str = temp_content.substr(0, pos);
-        std::string tmp = Trim(sub_str);
-        if (!tmp.empty()) {
-            words.push_back(tmp);
+static std::vector<std::string> SplitStringBySpace(const std::string &content) {
+    std::vector<std::string> words;
+    size_t start = 0;
+    size_t end = content.find(' ');
+
+    while (end != std::string::npos) {
+        std::string sub_str = content.substr(start, end - start);
+        std::string trimmed = Trim(sub_str);
+        if (!trimmed.empty()) {
+            words.push_back(trimmed);
         }
-        temp_content = temp_content.substr(pos + 1);
+        start = end + 1;
+        end = content.find(' ', start);
     }
-    std::string tmp_last = Trim(temp_content);
-    if (!tmp_last.empty()) {
-        words.push_back(tmp_last);
+
+    if (start < content.size()) {
+        std::string last_word = content.substr(start);
+        std::string trimmed = Trim(last_word);
+        if (!trimmed.empty()) {
+            words.push_back(trimmed);
+        }
     }
+
     return words;
 }
 
-static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive)
-{
+static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive) {
     if (whole_content.empty()) {
         return content;
     }
@@ -797,24 +805,25 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
 
     std::vector<std::string> whole_list = SplitStringBySpace(whole_content);
     std::vector<std::string> content_list = SplitStringBySpace(temp_content);
+
     for (const std::string &word : whole_list) {
-        auto it = std::find_if(content_list.begin(), content_list.end(), [&](const std::string& s) {
-            return s.find(word) != std::string::npos;
-        });
-        if (it != content_list.end()) {
-            content_list.push_back(*it);
-            content_list.erase(it);
+        for (size_t i = 0; i < content_list.size(); i++) {
+            if (content_list[i].find(word) != std::string::npos) {
+                content_list.push_back(content_list[i]);
+                content_list.erase(content_list.begin() + i);
+                i--;
+            }
         }
     }
 
-    std::string result = "";
-    for (int i = 0; i < content_list.size(); i++) {
-        result += content_list[i];
+    std::ostringstream oss;
+    for (size_t i = 0; i < content_list.size(); i++) {
+        oss << content_list[i];
         if (i != content_list.size() - 1) {
-            result += " ";
+            oss << " ";
         }
     }
-    return result;
+    return oss.str();
 }
 
 std::string Builder::GetContent(Edge* edge)

@@ -812,7 +812,6 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
         result += content_list[i];
         if (i != content_list.size() - 1) {
             result += " ";
-            oss << " ";
         }
     }
     return result;

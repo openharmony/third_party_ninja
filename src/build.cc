@@ -797,13 +797,16 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
     std::vector<std::string> whole_list = SplitStringBySpace(whole_content);
     std::vector<std::string> content_list = SplitStringBySpace(temp_content);
 
+    std::set<std::string> processed_words;
+
     for (const std::string &word : whole_list) {
         auto it = std::find_if(content_list.begin(), content_list.end(), [&](const std::string& s) {
             return s.find(word) != std::string::npos;
         });
-        if (it != content_list.end()) {
+        if (it != content_list.end() && processed_words.find(*it) == processed_words.end()) {
             content_list.push_back(*it);
             content_list.erase(it);
+            processed_words.insert(*it);
         }
     }
 

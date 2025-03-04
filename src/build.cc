@@ -748,14 +748,14 @@ static std::string &Trim(std::string &s)
         return s;
     }
     
-    size_t start = s.find_first_not_of(" \t\r\n");
+    size_t start = s.find_first_not_of(" \\\t\r\n");
     if (start == std::string::npos) {
         s.clear();
         return s;
     }
     s.erase(0, start);
 
-    size_t end = s.find_last_not_of(" \t\r\n");
+    size_t end = s.find_last_not_of(" \\\t\r\n");
     if (end != std::string::npos) {
         s.erase(end + 1);
     }
@@ -797,16 +797,13 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
     std::vector<std::string> whole_list = SplitStringBySpace(whole_content);
     std::vector<std::string> content_list = SplitStringBySpace(temp_content);
 
-    std::set<std::string> processed_words;
-
     for (const std::string &word : whole_list) {
         auto it = std::find_if(content_list.begin(), content_list.end(), [&](const std::string& s) {
             return s.find(word) != std::string::npos;
         });
-        if (it != content_list.end() && processed_words.find(*it) == processed_words.end()) {
+        if (it != content_list.end()) {
             content_list.push_back(*it);
             content_list.erase(it);
-            processed_words.insert(*it);
         }
     }
 

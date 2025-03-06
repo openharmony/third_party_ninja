@@ -21,6 +21,7 @@
 #include <climits>
 #include <stdint.h>
 #include <functional>
+#include <iostream>
 
 #if defined(__SVR4) && defined(__sun)
 #include <sys/termios.h>
@@ -747,7 +748,6 @@ static std::string &Trim(std::string &s)
     if (s.empty()) {
         return s;
     }
-    
     size_t start = s.find_first_not_of(" \\\t\r\n");
     if (start == std::string::npos) {
         s.clear();
@@ -759,7 +759,6 @@ static std::string &Trim(std::string &s)
     if (end != std::string::npos) {
         s.erase(end + 1);
     }
-
     return s;
 }
 
@@ -784,7 +783,7 @@ static std::vector<std::string> SplitStringBySpace(std::string content)
     return words;
 }
 
-static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive) {
+std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive) {
     if (whole_content.empty()) {
         return content;
     }
@@ -797,18 +796,21 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
     std::vector<std::string> whole_list = SplitStringBySpace(whole_content);
     std::vector<std::string> content_list = SplitStringBySpace(temp_content);
 
+    std::set<std::string> processed_words;
+
     for (const std::string &word : whole_list) {
         auto it = std::find_if(content_list.begin(), content_list.end(), [&](const std::string& s) {
             return s.find(word) != std::string::npos;
         });
-        if (it != content_list.end()) {
+        if (it != content_list.end() && processed_words.find(*it) == processed_words.end()) {
             content_list.push_back(*it);
             content_list.erase(it);
+            processed_words.insert(*it);
         }
     }
 
     std::string result = "";
-    for (int i = 0; i < content_list.size(); i++) {
+    for (size_t i = 0; i < content_list.size(); ++i) {
         result += content_list[i];
         if (i != content_list.size() - 1) {
             result += " ";

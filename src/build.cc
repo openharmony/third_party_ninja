@@ -804,7 +804,6 @@ std::string SplicingWholeContent(std::string content, std::string whole_content,
             std::string element = *it;
             content_list.erase(it);
             content_list.push_back(element);
-            processed_words.insert(element);
         }
     }
 

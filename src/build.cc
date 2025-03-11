@@ -21,6 +21,7 @@
 #include <climits>
 #include <stdint.h>
 #include <functional>
+#include <iostream>
 
 #if defined(__SVR4) && defined(__sun)
 #include <sys/termios.h>
@@ -747,8 +748,17 @@ static std::string &Trim(std::string &s)
     if (s.empty()) {
         return s;
     }
-    s.erase(0, s.find_first_not_of(" \t\r\n"));
-    s.erase(s.find_last_not_of(" \t\r\n") + 1);
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        s.clear();
+        return s;
+    }
+    s.erase(0, start);
+
+    size_t end = s.find_last_not_of(" \t\r\n");
+    if (end != std::string::npos) {
+        s.erase(end + 1);
+    }
     return s;
 }
 
@@ -773,8 +783,7 @@ static std::vector<std::string> SplitStringBySpace(std::string content)
     return words;
 }
 
-static std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive)
-{
+std::string SplicingWholeContent(std::string content, std::string whole_content, bool is_whole_archive) {
     if (whole_content.empty()) {
         return content;
     }
@@ -786,18 +795,21 @@ static std::string SplicingWholeContent(std::string content, std::string whole_c
 
     std::vector<std::string> whole_list = SplitStringBySpace(whole_content);
     std::vector<std::string> content_list = SplitStringBySpace(temp_content);
+    std::set<std::string> processed_words;
     for (const std::string &word : whole_list) {
         auto it = std::find_if(content_list.begin(), content_list.end(), [&](const std::string& s) {
             return s.find(word) != std::string::npos;
         });
-        if (it != content_list.end()) {
-            content_list.push_back(*it);
+        if (it != content_list.end() && processed_words.find(*it) == processed_words.end()) {
+            std::string element = *it;
             content_list.erase(it);
+            content_list.push_back(element);
+            processed_words.insert(element);
         }
     }
 
     std::string result = "";
-    for (int i = 0; i < content_list.size(); i++) {
+    for (size_t i = 0; i < content_list.size(); ++i) {
         result += content_list[i];
         if (i != content_list.size() - 1) {
             result += " ";

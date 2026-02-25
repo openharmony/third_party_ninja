@@ -51,7 +51,7 @@ TEST_F(ParserTest, Rules) {
 "build result: cat in_1.cc in-2.O\n"));
 
   ASSERT_EQ(3u, state.bindings_.GetRules().size());
-  const Rule* rule = state.bindings_.GetRules().begin()->second;
+  const auto& rule = state.bindings_.GetRules().begin()->second;
   EXPECT_EQ("cat", rule->name());
   EXPECT_EQ("[cat ][$in][ > ][$out]",
             rule->GetBinding("command")->Serialize());
@@ -84,7 +84,7 @@ TEST_F(ParserTest, IgnoreIndentedComments) {
 "  #comment\n"));
 
   ASSERT_EQ(2u, state.bindings_.GetRules().size());
-  const Rule* rule = state.bindings_.GetRules().begin()->second;
+  const auto& rule = state.bindings_.GetRules().begin()->second;
   EXPECT_EQ("cat", rule->name());
   Edge* edge = state.GetNode("result", 0)->in_edge();
   EXPECT_TRUE(edge->GetBindingBool("restat"));
@@ -117,7 +117,7 @@ TEST_F(ParserTest, ResponseFiles) {
 "  rspfile=out.rsp\n"));
 
   ASSERT_EQ(2u, state.bindings_.GetRules().size());
-  const Rule* rule = state.bindings_.GetRules().begin()->second;
+  const auto& rule = state.bindings_.GetRules().begin()->second;
   EXPECT_EQ("cat_rsp", rule->name());
   EXPECT_EQ("[cat ][$rspfile][ > ][$out]",
             rule->GetBinding("command")->Serialize());
@@ -134,7 +134,7 @@ TEST_F(ParserTest, InNewline) {
 "  rspfile=out.rsp\n"));
 
   ASSERT_EQ(2u, state.bindings_.GetRules().size());
-  const Rule* rule = state.bindings_.GetRules().begin()->second;
+  const auto& rule = state.bindings_.GetRules().begin()->second;
   EXPECT_EQ("cat_rsp", rule->name());
   EXPECT_EQ("[cat ][$in_newline][ > ][$out]",
             rule->GetBinding("command")->Serialize());
@@ -195,7 +195,7 @@ TEST_F(ParserTest, Continuation) {
 " d e f\n"));
 
   ASSERT_EQ(2u, state.bindings_.GetRules().size());
-  const Rule* rule = state.bindings_.GetRules().begin()->second;
+  const auto& rule = state.bindings_.GetRules().begin()->second;
   EXPECT_EQ("link", rule->name());
   EXPECT_EQ("[foo bar baz]", rule->GetBinding("command")->Serialize());
 }
@@ -330,29 +330,6 @@ TEST_F(ParserTest, CanonicalizePathsBackslashes) {
 }
 #endif
 
-TEST_F(ParserTest, DuplicateEdgeWithMultipleOutputs) {
-  ASSERT_NO_FATAL_FAILURE(AssertParse(
-"rule cat\n"
-"  command = cat $in > $out\n"
-"build out1 out2: cat in1\n"
-"build out1: cat in2\n"
-"build final: cat out1\n"
-));
-  // AssertParse() checks that the generated build graph is self-consistent.
-  // That's all the checking that this test needs.
-}
-
-TEST_F(ParserTest, NoDeadPointerFromDuplicateEdge) {
-  ASSERT_NO_FATAL_FAILURE(AssertParse(
-"rule cat\n"
-"  command = cat $in > $out\n"
-"build out: cat in\n"
-"build out: cat in\n"
-));
-  // AssertParse() checks that the generated build graph is self-consistent.
-  // That's all the checking that this test needs.
-}
-
 TEST_F(ParserTest, DuplicateEdgeWithMultipleOutputsError) {
   const char kInput[] =
 "rule cat\n"
@@ -360,9 +337,7 @@ TEST_F(ParserTest, DuplicateEdgeWithMultipleOutputsError) {
 "build out1 out2: cat in1\n"
 "build out1: cat in2\n"
 "build final: cat out1\n";
-  ManifestParserOptions parser_opts;
-  parser_opts.dupe_edge_action_ = kDupeEdgeActionError;
-  ManifestParser parser(&state, &fs_, parser_opts);
+  ManifestParser parser(&state, &fs_);
   string err;
   EXPECT_FALSE(parser.ParseTest(kInput, &err));
   EXPECT_EQ("input:5: multiple rules generate out1\n", err);
@@ -377,9 +352,7 @@ TEST_F(ParserTest, DuplicateEdgeInIncludedFile) {
     "build final: cat out1\n");
   const char kInput[] =
     "subninja sub.ninja\n";
-  ManifestParserOptions parser_opts;
-  parser_opts.dupe_edge_action_ = kDupeEdgeActionError;
-  ManifestParser parser(&state, &fs_, parser_opts);
+  ManifestParser parser(&state, &fs_);
   string err;
   EXPECT_FALSE(parser.ParseTest(kInput, &err));
   EXPECT_EQ("sub.ninja:5: multiple rules generate out1\n", err);
@@ -407,7 +380,7 @@ TEST_F(ParserTest, PhonySelfReferenceKept) {
 
   Node* node = state.LookupNode("a");
   Edge* edge = node->in_edge();
-  ASSERT_EQ(edge->inputs_.size(), 1);
+  ASSERT_EQ(edge->inputs_.size(), size_t(1));
   ASSERT_EQ(edge->inputs_[0], node);
 }
 
@@ -971,7 +944,7 @@ TEST_F(ParserTest, Validations) {
 "build foo: cat bar |@ baz\n"));
 
   Edge* edge = state.LookupNode("foo")->in_edge();
-  ASSERT_EQ(edge->validations_.size(), 1);
+  ASSERT_EQ(edge->validations_.size(), size_t(1));
   EXPECT_EQ(edge->validations_[0]->path(), "baz");
 }
 
@@ -982,7 +955,7 @@ TEST_F(ParserTest, ImplicitOutput) {
 "build foo | imp: cat bar\n"));
 
   Edge* edge = state.LookupNode("imp")->in_edge();
-  ASSERT_EQ(edge->outputs_.size(), 2);
+  ASSERT_EQ(edge->outputs_.size(), size_t(2));
   EXPECT_TRUE(edge->is_implicit_out(1));
 }
 
@@ -993,32 +966,30 @@ TEST_F(ParserTest, ImplicitOutputEmpty) {
 "build foo | : cat bar\n"));
 
   Edge* edge = state.LookupNode("foo")->in_edge();
-  ASSERT_EQ(edge->outputs_.size(), 1);
+  ASSERT_EQ(edge->outputs_.size(), size_t(1));
   EXPECT_FALSE(edge->is_implicit_out(0));
 }
 
-TEST_F(ParserTest, ImplicitOutputDupe) {
-  ASSERT_NO_FATAL_FAILURE(AssertParse(
+TEST_F(ParserTest, ImplicitOutputDupeError) {
+  const char kInput[] =
 "rule cat\n"
 "  command = cat $in > $out\n"
-"build foo baz | foo baq foo: cat bar\n"));
-
-  Edge* edge = state.LookupNode("foo")->in_edge();
-  ASSERT_EQ(edge->outputs_.size(), 3);
-  EXPECT_FALSE(edge->is_implicit_out(0));
-  EXPECT_FALSE(edge->is_implicit_out(1));
-  EXPECT_TRUE(edge->is_implicit_out(2));
+"build foo baz | foo baq foo: cat bar\n";
+  ManifestParser parser(&state, &fs_);
+  string err;
+  EXPECT_FALSE(parser.ParseTest(kInput, &err));
+  EXPECT_EQ("input:4: foo is defined as an output multiple times\n", err);
 }
 
-TEST_F(ParserTest, ImplicitOutputDupes) {
-  ASSERT_NO_FATAL_FAILURE(AssertParse(
+TEST_F(ParserTest, ImplicitOutputDupesError) {
+  const char kInput[] =
 "rule cat\n"
 "  command = cat $in > $out\n"
-"build foo foo foo | foo foo foo foo: cat bar\n"));
-
-  Edge* edge = state.LookupNode("foo")->in_edge();
-  ASSERT_EQ(edge->outputs_.size(), 1);
-  EXPECT_FALSE(edge->is_implicit_out(0));
+"build foo foo foo | foo foo foo foo: cat bar\n";
+  ManifestParser parser(&state, &fs_);
+  string err;
+  EXPECT_FALSE(parser.ParseTest(kInput, &err));
+  EXPECT_EQ("input:4: foo is defined as an output multiple times\n", err);
 }
 
 TEST_F(ParserTest, NoExplicitOutput) {

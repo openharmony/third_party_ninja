@@ -31,12 +31,12 @@ TEST(State, Basic) {
 
   Rule* rule = new Rule("cat");
   rule->AddBinding("command", command);
-  state.bindings_.AddRule(rule);
+  state.bindings_.AddRule(std::unique_ptr<Rule>(rule));
 
   Edge* edge = state.AddEdge(rule);
   state.AddIn(edge, "in1", 0);
   state.AddIn(edge, "in2", 0);
-  state.AddOut(edge, "out", 0);
+  state.AddOut(edge, "out", 0, nullptr);
 
   EXPECT_EQ("cat in1 in2 > out", edge->EvaluateCommand());
 

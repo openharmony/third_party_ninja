@@ -19,6 +19,9 @@
 #include <string>
 #include <vector>
 
+#include "explanations.h"
+#include "manifest_parser.h"  // For DupeEdgeAction
+
 struct DiskInterface;
 struct Edge;
 struct Node;
@@ -42,8 +45,11 @@ struct DyndepFile: public std::map<Edge*, Dyndeps> {};
 /// DyndepLoader loads dynamically discovered dependencies, as
 /// referenced via the "dyndep" attribute in build files.
 struct DyndepLoader {
-  DyndepLoader(State* state, DiskInterface* disk_interface)
-      : state_(state), disk_interface_(disk_interface) {}
+  DyndepLoader(State* state, DiskInterface* disk_interface,
+               Explanations* explanations = nullptr,
+               DupeEdgeAction dupe_edge_action = kDupeEdgeActionError)
+      : state_(state), disk_interface_(disk_interface),
+        explanations_(explanations), dupe_edge_action_(dupe_edge_action) {}
 
   /// Load a dyndep file from the given node's path and update the
   /// build graph with the new information.  One overload accepts
@@ -59,6 +65,8 @@ struct DyndepLoader {
 
   State* state_;
   DiskInterface* disk_interface_;
+  mutable OptionalExplanations explanations_;
+  DupeEdgeAction dupe_edge_action_;
 };
 
 #endif  // NINJA_DYNDEP_LOADER_H_

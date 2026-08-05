@@ -261,7 +261,7 @@ LoadStatus DepsLog::Load(const string& path, State* state, string* err) {
       unsigned checksum = *reinterpret_cast<unsigned*>(buf + size - 4);
       int expected_id = ~checksum;
       int id = static_cast<int>(nodes_.size());
-      if (id != expected_id || node->id() >= 0) {
+      if (id != expected_id) {
         read_failed = true;
         break;
       }

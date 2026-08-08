@@ -16,6 +16,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #ifndef _WIN32
@@ -34,12 +35,14 @@ using namespace std;
 
 // The version is stored as 4 bytes after the signature and also serves as a
 // byte order mark. Signature and version combined are 16 bytes long.
-const char kFileSignature[] = "# ninjadeps\n";
-const int kCurrentVersion = 4;
+static const char kFileSignature[] = "# ninjadeps\n";
+static const size_t kFileSignatureSize = sizeof(kFileSignature) - 1u;
+
+static const int32_t kCurrentVersion = 4;
 
 // Record size is currently limited to less than the full 32 bit, due to
 // internal buffers having to have this size.
-const unsigned kMaxRecordSize = (1 << 19) - 1;
+static constexpr size_t kMaxRecordSize = (1 << 19) - 1;
 
 DepsLog::~DepsLog() {
   Close();
@@ -159,17 +162,18 @@ LoadStatus DepsLog::Load(const string& path, State* state, string* err) {
     return LOAD_ERROR;
   }
 
-  bool valid_header = true;
-  int version = 0;
-  if (!fgets(buf, sizeof(buf), f) || fread(&version, 4, 1, f) < 1)
-    valid_header = false;
+  bool valid_header = fread(buf, kFileSignatureSize, 1, f) == 1 &&
+                      !memcmp(buf, kFileSignature, kFileSignatureSize);
+
+  int32_t version = 0;
+  bool valid_version =
+      fread(&version, 4, 1, f) == 1 && version == kCurrentVersion;
 
   // Note: For version differences, this should migrate to the new format.
   // But the v1 format could sometimes (rarely) end up with invalid data, so
   // don't migrate v1 to v3 to force a rebuild. (v2 only existed for a few days,
   // and there was no release with it, so pretend that it never happened.)
-  if (!valid_header || strcmp(buf, kFileSignature) != 0 ||
-      version != kCurrentVersion) {
+  if (!valid_header || !valid_version) {
     if (version == 1)
       *err = "deps log version change; rebuilding";
     else
@@ -202,7 +206,10 @@ LoadStatus DepsLog::Load(const string& path, State* state, string* err) {
     offset += size + sizeof(size);
 
     if (is_deps) {
-      assert(size % 4 == 0);
+      if ((size % 4) != 0) {
+        read_failed = true;
+        break;
+      }
       int* deps_data = reinterpret_cast<int*>(buf);
       int out_id = deps_data[0];
       TimeStamp mtime;
@@ -211,10 +218,18 @@ LoadStatus DepsLog::Load(const string& path, State* state, string* err) {
       deps_data += 3;
       int deps_count = (size / 4) - 3;
 
+      for (int i = 0; i < deps_count; ++i) {
+        int node_id = deps_data[i];
+        if (node_id >= (int)nodes_.size() || !nodes_[node_id]) {
+          read_failed = true;
+          break;
+        }
+      }
+      if (read_failed)
+        break;
+
       Deps* deps = new Deps(mtime, deps_count);
       for (int i = 0; i < deps_count; ++i) {
-        assert(deps_data[i] < (int)nodes_.size());
-        assert(nodes_[deps_data[i]]);
         deps->nodes[i] = nodes_[deps_data[i]];
       }
 
@@ -223,7 +238,10 @@ LoadStatus DepsLog::Load(const string& path, State* state, string* err) {
         ++unique_dep_record_count;
     } else {
       int path_size = size - 4;
-      assert(path_size > 0);  // CanonicalizePath() rejects empty paths.
+      if (path_size <= 0) {
+        read_failed = true;
+        break;
+      }
       // There can be up to 3 bytes of padding.
       if (buf[path_size - 1] == '\0') --path_size;
       if (buf[path_size - 1] == '\0') --path_size;
@@ -247,8 +265,6 @@ LoadStatus DepsLog::Load(const string& path, State* state, string* err) {
         read_failed = true;
         break;
       }
-
-      assert(node->id() < 0);
       node->set_id(id);
       nodes_.push_back(node);
     }
@@ -383,6 +399,7 @@ bool DepsLog::UpdateDeps(int out_id, Deps* deps) {
 
 bool DepsLog::RecordId(Node* node) {
   int path_size = static_cast<int>(node->path().size());
+  assert(path_size > 0 && "Trying to record empty path Node!");
   int padding = (4 - path_size % 4) % 4;  // Pad path to 4 byte boundary.
 
   unsigned size = path_size + padding + 4;
@@ -397,7 +414,6 @@ bool DepsLog::RecordId(Node* node) {
   if (fwrite(&size, 4, 1, file_) < 1)
     return false;
   if (fwrite(node->path().data(), path_size, 1, file_) < 1) {
-    assert(!node->path().empty());
     return false;
   }
   if (padding && fwrite("\0\0", padding, 1, file_) < 1)
